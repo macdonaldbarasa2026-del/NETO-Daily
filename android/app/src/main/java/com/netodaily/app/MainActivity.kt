@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
 
             onStateChanged = { state ->
                 runOnUiThread {
-                    orb.setState(state)
+                    if (::orb.isInitialized) orb.setState(state)
 
                     statusText.text = when (state) {
                         NetoVoiceOrbView.State.IDLE -> "Ready"
@@ -86,15 +86,15 @@ class MainActivity : AppCompatActivity() {
 
             onAudioLevel = { level ->
                 runOnUiThread {
-                    orb.setAudioLevel(level)
+                    if (::orb.isInitialized) orb.setAudioLevel(level)
                 }
             },
 
             onError = { message ->
                 runOnUiThread {
                     listening = false
-                    orb.setState(NetoVoiceOrbView.State.IDLE)
-                    orb.setAudioLevel(0f)
+                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
+                    if (::orb.isInitialized) orb.setAudioLevel(0f)
                     statusText.text = "Ready"
                     captionSpeaker.text = "NETO"
                     caption.text = message
@@ -489,12 +489,12 @@ class MainActivity : AppCompatActivity() {
 
             launch(Dispatchers.Main) {
                 if (result.first) {
-                    orb.setState(NetoVoiceOrbView.State.IDLE)
+                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
                     statusText.text = "Ready"
                     captionSpeaker.text = "NETO"
                     caption.text = result.second
                 } else {
-                    orb.setState(NetoVoiceOrbView.State.IDLE)
+                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
                     statusText.text = "Ready"
                     captionSpeaker.text = "NETO"
                     caption.text = result.second
