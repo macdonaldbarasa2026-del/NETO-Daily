@@ -14,21 +14,26 @@ class NetoLiveTokenClient {
     }
 
     fun requestToken(): NetoLiveTokenResponse {
-        return try {
-            val session = Supabase.client.auth.currentSessionOrNull()
-                ?: return NetoLiveTokenResponse(
-                    error = "Please sign in to use NETO voice."
-                )
+        var connection: HttpURLConnection? = null
 
-            val connection =
-                URL(
-                    "${BuildConfig.SUPABASE_URL}/functions/v1/neto-live-token"
-                ).openConnection() as HttpURLConnection
+        return try {
+            val session =
+                Supabase.client.auth.currentSessionOrNull()
+                    ?: return NetoLiveTokenResponse(
+                        error = "Please sign in to use NETO voice."
+                    )
+
+            val url =
+                "${BuildConfig.SUPABASE_URL}/functions/v1/neto-live-token"
+
+            connection =
+                URL(url).openConnection() as HttpURLConnection
 
             connection.requestMethod = "POST"
             connection.connectTimeout = 20_000
             connection.readTimeout = 30_000
             connection.doInput = true
+            connection.doOutput = false
 
             connection.setRequestProperty(
                 "Authorization",
@@ -45,6 +50,11 @@ class NetoLiveTokenClient {
                 "application/json"
             )
 
+            connection.setRequestProperty(
+                "Accept",
+                "application/json"
+            )
+
             val code = connection.responseCode
 
             val stream =
@@ -55,25 +65,52 @@ class NetoLiveTokenClient {
                 }
 
             val body =
-                stream?.bufferedReader()?.use {
-                    it.readText()
+                stream?.bufferedReader()?.use { reader ->
+                    reader.readText()
                 }.orEmpty()
 
             if (code !in 200..299) {
-                return runCatching {
-                    json.decodeFromString<NetoLiveTokenResponse>(body)
-                }.getOrElse {
-                    NetoLiveTokenResponse(
-                        error = "Could not start NETO Live."
-                    )
-                }
+                val serverError =
+                    runCatching {
+                        json.decodeFromString<NetoLiveTokenResponse>(body)
+                    }.getOrNull()
+
+                return NetoLiveTokenResponse(
+                    error =
+                        serverError?.error?.takeIf { it.isNotBlank() }
+                            ?: when (code) {
+                                401 -> "NETO authentication expired. Please sign in again."
+                                403 -> "NETO Live access was denied."
+                                404 -> "NETO Live endpoint was not found."
+                                500 -> "NETO Live server configuration failed."
+                                502 -> "Gemini Live could not be started."
+                                else -> "NETO Live request failed (HTTP $code)."
+                            }
+                )
             }
 
-            json.decodeFromString(body)
-        } catch (_: Throwable) {
+            val response =
+                json.decodeFromString<NetoLiveTokenResponse>(body)
+
+            if (!response.ok || response.token.isNullOrBlank()) {
+                NetoLiveTokenResponse(
+                    error =
+                        response.error
+                            ?.takeIf { it.isNotBlank() }
+                            ?: "NETO Live returned an invalid token."
+                )
+            } else {
+                response
+            }
+
+        } catch (t: Throwable) {
             NetoLiveTokenResponse(
-                error = "NETO could not connect to Live voice."
+                error =
+                    t.message?.takeIf { it.isNotBlank() }
+                        ?: "NETO could not connect to Live voice."
             )
+        } finally {
+            connection?.disconnect()
         }
     }
 }

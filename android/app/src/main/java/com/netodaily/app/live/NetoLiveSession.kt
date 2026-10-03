@@ -147,8 +147,9 @@ class NetoLiveSession(
 
             if (!closing) {
                 onError(
-                    t.message
-                        ?: "NETO Live connection failed."
+                    "NETO Live connection failed: " +
+                        (t.message?.takeIf { it.isNotBlank() }
+                            ?: t.javaClass.simpleName)
                 )
             }
         } finally {
