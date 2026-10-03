@@ -85,12 +85,12 @@ class NetoVoiceOrbView @JvmOverloads constructor(
         paint.shader = RadialGradient(
             cx,
             cy,
-            reactiveRadius * 1.28f,
+            (reactiveRadius * 1.28f).toFloat(),
             intArrayOf(
                 0xFFFDFEFE.toInt(),
                 0xFFE7EEEA.toInt(),
                 accent,
-                0x00000000
+                0x00000000.toInt()
             ),
             floatArrayOf(0f, 0.45f, 0.78f, 1f),
             Shader.TileMode.CLAMP
@@ -101,7 +101,7 @@ class NetoVoiceOrbView @JvmOverloads constructor(
         corePaint.shader = RadialGradient(
             cx - reactiveRadius * 0.22f,
             cy - reactiveRadius * 0.24f,
-            reactiveRadius * 1.15f,
+            (reactiveRadius * 1.15f).toFloat(),
             intArrayOf(
                 0xFFFFFFFF.toInt(),
                 0xFFEAF1ED.toInt(),

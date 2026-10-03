@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.google.android.material.card.MaterialCardView
+import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -262,7 +263,7 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
-        val hint = TextView(this).apply {
+        val voiceHint = TextView(this).apply {
             text = "Tap the orb to speak"
             textSize = 13f
             setTextColor(muted)
@@ -270,7 +271,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         content.addView(
-            hint,
+            voiceHint,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(32)
@@ -858,7 +859,6 @@ class MainActivity : AppCompatActivity() {
         )
 
         if (requestCode == 7001) {
-
             if (
                 grantResults.isNotEmpty() &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED
@@ -870,10 +870,9 @@ class MainActivity : AppCompatActivity() {
                 caption.text =
                     "Microphone access is needed for voice conversations."
             }
+            return
         }
-    }
 
-        
         if (
             requestCode == 7003 &&
             grantResults.isNotEmpty() &&
@@ -885,8 +884,8 @@ class MainActivity : AppCompatActivity() {
                 else
                     NetoCameraController.Lens.BACK
             )
-            return
         }
+    }
 
     private val cameraController by lazy {
         NetoCameraController(
