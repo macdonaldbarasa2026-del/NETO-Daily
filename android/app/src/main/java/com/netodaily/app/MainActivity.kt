@@ -112,6 +112,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (Supabase.client.auth.currentUserOrNull() == null) {
+            startActivity(Intent(this, com.netodaily.app.auth.AuthActivity::class.java))
+            finish()
+            return
+        }
+
         window.statusBarColor = bg
         window.navigationBarColor = bg
         WindowInsetsControllerCompatHelper.lightBars(window)

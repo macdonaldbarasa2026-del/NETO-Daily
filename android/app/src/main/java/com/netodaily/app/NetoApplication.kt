@@ -9,6 +9,9 @@ class NetoApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        try {
+            Supabase.initialize(this)
+        } catch (_: Throwable) {}
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {

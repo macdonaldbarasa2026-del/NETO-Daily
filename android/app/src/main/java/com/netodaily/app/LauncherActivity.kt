@@ -37,6 +37,14 @@ class LauncherActivity : AppCompatActivity() {
             }
 
             scroll.addView(text)
+            scroll.setOnClickListener {
+                crashFile.delete()
+                recreate()
+            }
+            text.setOnClickListener {
+                crashFile.delete()
+                recreate()
+            }
             setContentView(scroll)
             return
         }

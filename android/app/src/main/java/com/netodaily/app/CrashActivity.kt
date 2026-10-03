@@ -60,6 +60,18 @@ class CrashActivity : AppCompatActivity() {
             )
         )
 
+        val btn = android.widget.Button(this).apply {
+            text = "Restart App"
+            setOnClickListener {
+                File(filesDir, "neto-crash.txt").delete()
+                val intent = packageManager.getLaunchIntentForPackage(packageName)
+                intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                finish()
+            }
+        }
+        root.addView(btn, LinearLayout.LayoutParams(-1, -2))
+
         setContentView(root)
     }
 }

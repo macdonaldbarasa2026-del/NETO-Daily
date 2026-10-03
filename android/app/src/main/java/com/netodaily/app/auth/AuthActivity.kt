@@ -421,8 +421,8 @@ class AuthActivity : AppCompatActivity() {
                     MainActivity::class.java
                 ).apply {
                     flags =
-                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
             )
             finish()

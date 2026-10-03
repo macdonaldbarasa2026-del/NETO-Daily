@@ -45,7 +45,7 @@ class GeminiLiveClient(
         private const val INPUT_RATE = 16_000
         private const val OUTPUT_RATE = 24_000
         private const val INPUT_BUFFER = 4096
-        private const val MODEL = "models/gemini-3.8-live"
+        private const val MODEL = "models/gemini-2.0-flash-exp"
         private const val LIVE_URL =
             "wss://generativelanguage.googleapis.com/" +
                 "ws/google.ai.generativelanguage.v1beta." +
