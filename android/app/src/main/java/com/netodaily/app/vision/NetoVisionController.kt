@@ -108,7 +108,7 @@ class NetoVisionController(
         val intent = Intent(context, NetoMediaCaptureService::class.java).apply {
             action = NetoMediaCaptureService.ACTION_START
             putExtra(NetoMediaCaptureService.EXTRA_RESULT_CODE, resultCode)
-            putExtra(NetoMediaCaptureService.EXTRA_DATA, data)
+            putExtra(NetoMediaCaptureService.EXTRA_RESULT_DATA, data)
         }
 
         context.startForegroundService(intent)

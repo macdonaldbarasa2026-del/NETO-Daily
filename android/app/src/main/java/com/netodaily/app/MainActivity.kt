@@ -56,7 +56,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var visualPreview: ImageView
     private lateinit var visualPreviewLabel: TextView
 
-    private var visualState = NetoVisualState.None
+    private var visualState: NetoVisualState = NetoVisualState.None
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -484,7 +484,7 @@ class MainActivity : AppCompatActivity() {
         input = EditText(this).apply {
             hint = "Type a message…"
             textSize = 15f
-            singleLine = true
+            setSingleLine(true)
             setTextColor(Color.rgb(30, 45, 34))
             setHintTextColor(Color.rgb(125, 140, 129))
             setPadding(dp(10), 0, dp(10), 0)
@@ -591,9 +591,7 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                maxWidth = dp(330)
-            }
+            )
         )
 
         messagesContainer.addView(
@@ -1033,7 +1031,7 @@ class MainActivity : AppCompatActivity() {
     private fun showLinkDialog() {
         val edit = EditText(this).apply {
             hint = "https://example.com"
-            singleLine = true
+            setSingleLine(true)
         }
 
         AlertDialogBuilder()
@@ -1168,6 +1166,26 @@ class MainActivity : AppCompatActivity() {
         )
 
         showPanel(panel)
+    }
+
+    private fun stopVisualInput() {
+        if (::visionController.isInitialized) {
+            visionController.stop()
+        }
+
+        visualState = NetoVisualState.None
+
+        if (::visualPreviewCard.isInitialized) {
+            visualPreviewCard.visibility = View.GONE
+        }
+
+        if (::visualPreview.isInitialized) {
+            visualPreview.setImageDrawable(null)
+        }
+
+        if (::visualPreviewLabel.isInitialized) {
+            visualPreviewLabel.text = ""
+        }
     }
 
     private fun toggleVoice() {
