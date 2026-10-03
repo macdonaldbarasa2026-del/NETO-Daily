@@ -5,6 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -14,9 +17,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
-import android.graphics.Bitmap
-import android.graphics.PixelFormat
-import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 
 class NetoMediaCaptureService : Service() {
@@ -38,17 +38,30 @@ class NetoMediaCaptureService : Service() {
         private const val CHANNEL =
             "neto_screen_share"
 
-        private const val NOTIFICATION_ID = 4201
+        private const val NOTIFICATION_ID =
+            4201
+
+        private const val MAX_WIDTH =
+            960
+
+        private const val MAX_HEIGHT =
+            540
     }
 
-    private var projection: MediaProjection? = null
-    private var display: VirtualDisplay? = null
-    private var reader: ImageReader? = null
+    private var projection:
+        MediaProjection? = null
 
-    private var thread: HandlerThread? = null
-    private var handler: Handler? = null
+    private var display:
+        VirtualDisplay? = null
 
-    private var lastFrameTime = 0L
+    private var reader:
+        ImageReader? = null
+
+    private var thread:
+        HandlerThread? = null
+
+    private var handler:
+        Handler? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -85,8 +98,8 @@ class NetoMediaCaptureService : Service() {
                     }
 
                 if (
-                    resultData != null &&
-                    resultCode != 0
+                    resultCode != 0 &&
+                    resultData != null
                 ) {
                     startCapture(
                         resultCode,
@@ -133,7 +146,7 @@ class NetoMediaCaptureService : Service() {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                android.content.pm.ServiceInfo
+                ServiceInfo
                     .FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             )
 
@@ -156,12 +169,13 @@ class NetoMediaCaptureService : Service() {
                 resultData
             )
 
-        if (projection == null) {
-            stopSelf()
-            return
-        }
+        val mediaProjection =
+            projection ?: run {
+                stopSelf()
+                return
+            }
 
-        projection!!.registerCallback(
+        mediaProjection.registerCallback(
             object : MediaProjection.Callback() {
 
                 override fun onStop() {
@@ -175,23 +189,42 @@ class NetoMediaCaptureService : Service() {
         val metrics =
             resources.displayMetrics
 
+        val originalWidth =
+            metrics.widthPixels
+
+        val originalHeight =
+            metrics.heightPixels
+
+        val scale =
+            minOf(
+                MAX_WIDTH.toFloat() /
+                    originalWidth.toFloat(),
+                MAX_HEIGHT.toFloat() /
+                    originalHeight.toFloat(),
+                1f
+            )
+
         val width =
-            (metrics.widthPixels * 0.75f)
+            (originalWidth * scale)
                 .toInt()
-                .coerceAtLeast(640)
+                .coerceAtLeast(320)
 
         val height =
-            (metrics.heightPixels * 0.75f)
+            (originalHeight * scale)
                 .toInt()
-                .coerceAtLeast(360)
+                .coerceAtLeast(240)
 
         thread =
-            HandlerThread("NETO-Screen").also {
+            HandlerThread(
+                "NETO-Screen"
+            ).also {
                 it.start()
             }
 
         handler =
-            Handler(thread!!.looper)
+            Handler(
+                thread!!.looper
+            )
 
         reader =
             ImageReader.newInstance(
@@ -210,69 +243,61 @@ class NetoMediaCaptureService : Service() {
 
                 try {
 
-                    val now =
-                        System.currentTimeMillis()
+                    val plane =
+                        image.planes[0]
 
-                    if (
-                        now - lastFrameTime >= 1000L
-                    ) {
+                    val buffer =
+                        plane.buffer
 
-                        lastFrameTime = now
+                    val pixelStride =
+                        plane.pixelStride
 
-                        val plane =
-                            image.planes[0]
+                    val rowStride =
+                        plane.rowStride
 
-                        val buffer =
-                            plane.buffer
+                    val rowPadding =
+                        rowStride -
+                            pixelStride * width
 
-                        val pixelStride =
-                            plane.pixelStride
+                    val bitmapWidth =
+                        width +
+                            rowPadding /
+                            pixelStride
 
-                        val rowStride =
-                            plane.rowStride
-
-                        val rowPadding =
-                            rowStride -
-                                pixelStride * width
-
-                        val bitmapWidth =
-                            width +
-                                rowPadding /
-                                pixelStride
-
-                        val bitmap =
-                            Bitmap.createBitmap(
-                                bitmapWidth,
-                                height,
-                                Bitmap.Config.ARGB_8888
-                            )
-
-                        buffer.rewind()
-
-                        bitmap.copyPixelsFromBuffer(
-                            buffer
+                    val bitmap =
+                        Bitmap.createBitmap(
+                            bitmapWidth,
+                            height,
+                            Bitmap.Config.ARGB_8888
                         )
 
-                        val output =
-                            ByteArrayOutputStream()
+                    buffer.rewind()
 
-                        bitmap.compress(
-                            Bitmap.CompressFormat.JPEG,
-                            65,
-                            output
-                        )
+                    bitmap.copyPixelsFromBuffer(
+                        buffer
+                    )
 
-                        bitmap.recycle()
+                    val output =
+                        ByteArrayOutputStream()
 
-                        NetoScreenFrameBus.publish(
-                            output.toByteArray()
-                        )
-                    }
+                    bitmap.compress(
+                        Bitmap.CompressFormat.JPEG,
+                        60,
+                        output
+                    )
 
-                } catch (_: Exception) {
+                    bitmap.recycle()
+
+                    NetoScreenFrameBus.publish(
+                        output.toByteArray()
+                    )
+
+                } catch (_: Throwable) {
+
+                    // A single bad frame must not stop
+                    // the screen-share service.
 
                 } finally {
-
                     image.close()
                 }
 
@@ -281,12 +306,13 @@ class NetoMediaCaptureService : Service() {
         )
 
         display =
-            projection!!.createVirtualDisplay(
+            mediaProjection.createVirtualDisplay(
                 "NETO-Screen",
                 width,
                 height,
                 metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                DisplayManager
+                    .VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader!!.surface,
                 null,
                 handler
@@ -295,30 +321,26 @@ class NetoMediaCaptureService : Service() {
 
     private fun stopCapture() {
 
-        try {
+        runCatching {
             display?.release()
-        } catch (_: Exception) {
         }
 
         display = null
 
-        try {
+        runCatching {
             reader?.close()
-        } catch (_: Exception) {
         }
 
         reader = null
 
-        try {
+        runCatching {
             projection?.stop()
-        } catch (_: Exception) {
         }
 
         projection = null
 
-        try {
+        runCatching {
             thread?.quitSafely()
-        } catch (_: Exception) {
         }
 
         thread = null
@@ -333,7 +355,8 @@ class NetoMediaCaptureService : Service() {
                 NotificationChannel(
                     CHANNEL,
                     "NETO screen sharing",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager
+                        .IMPORTANCE_LOW
                 )
 
             getSystemService(
@@ -349,9 +372,7 @@ class NetoMediaCaptureService : Service() {
     ): IBinder? = null
 
     override fun onDestroy() {
-
         stopCapture()
-
         super.onDestroy()
     }
 }

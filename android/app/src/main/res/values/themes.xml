@@ -6,17 +6,17 @@
 
         <item name="android:fontFamily">sans</item>
 
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">@color/neto_bg</item>
+        <item name="android:windowBackground">@color/neto_bg</item>
 
+        <item name="android:statusBarColor">@color/neto_bg</item>
         <item name="android:navigationBarColor">@color/neto_bg</item>
+
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
 
-        <item name="android:colorAccent">@color/neto_accent</item>
         <item name="colorPrimary">@color/neto_accent</item>
         <item name="colorSecondary">@color/neto_accent</item>
 
-        <item name="android:windowActionModeOverlay">true</item>
     </style>
 
 </resources>

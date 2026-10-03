@@ -4,19 +4,22 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
-import android.hardware.camera2.*
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 class NetoCameraController(
     private val context: Context,
     private val onFrame: (ByteArray) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (Throwable) -> Unit
 ) {
 
     enum class Lens {
@@ -24,357 +27,251 @@ class NetoCameraController(
         BACK
     }
 
-    private var camera: CameraDevice? = null
-    private var session: CameraCaptureSession? = null
-    private var reader: ImageReader? = null
+    companion object {
+        private const val WIDTH = 960
+        private const val HEIGHT = 540
+        private const val JPEG_QUALITY = 65
+    }
+
+    private val cameraManager =
+        context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
+    private var imageReader: ImageReader? = null
+
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
 
-    private var lastFrameTime = 0L
+    private val running = AtomicBoolean(false)
 
-    fun hasPermission(): Boolean =
-        ContextCompat.checkSelfPermission(
+    fun hasPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
+    }
 
     fun start(lens: Lens) {
-
-        if (!hasPermission()) {
-            onError("Camera permission is required.")
-            return
-        }
+        if (!hasPermission()) return
 
         stop()
 
-        thread = HandlerThread("NETO-Camera").also {
-            it.start()
+        val facing = when (lens) {
+            Lens.FRONT -> CameraCharacteristics.LENS_FACING_FRONT
+            Lens.BACK -> CameraCharacteristics.LENS_FACING_BACK
         }
 
+        val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+            cameraManager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == facing
+        } ?: return
+
+        thread = HandlerThread("NETO-Camera").also { it.start() }
         handler = Handler(thread!!.looper)
 
-        val manager =
-            context.getSystemService(
-                Context.CAMERA_SERVICE
-            ) as CameraManager
+        imageReader = ImageReader.newInstance(
+            WIDTH,
+            HEIGHT,
+            ImageFormat.YUV_420_888,
+            2
+        ).also { reader ->
 
-        val cameraId = findCamera(manager, lens)
+            reader.setOnImageAvailableListener(
+                { source ->
+                    val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
 
-        if (cameraId == null) {
-            onError("Requested camera is not available.")
-            return
-        }
-
-        reader =
-            ImageReader.newInstance(
-                1280,
-                720,
-                ImageFormat.YUV_420_888,
-                2
-            )
-
-        reader!!.setOnImageAvailableListener(
-            { source ->
-
-                val image =
-                    source.acquireLatestImage()
-                        ?: return@setOnImageAvailableListener
-
-                try {
-
-                    val now = System.currentTimeMillis()
-
-                    // Gemini Live video input is limited to
-                    // about one image per second.
-                    if (now - lastFrameTime >= 1000L) {
-
-                        lastFrameTime = now
-
-                        val jpeg =
-                            yuv420ToJpeg(image)
-
-                        onFrame(jpeg)
-                    }
-
-                } catch (e: Exception) {
-
-                    onError(
-                        e.message ?: "Camera frame error."
-                    )
-
-                } finally {
-                    image.close()
-                }
-
-            },
-            handler
-        )
-
-        try {
-
-            manager.openCamera(
-                cameraId,
-                object : CameraDevice.StateCallback() {
-
-                    override fun onOpened(
-                        device: CameraDevice
-                    ) {
-                        camera = device
-                        createCaptureSession()
-                    }
-
-                    override fun onDisconnected(
-                        device: CameraDevice
-                    ) {
-                        device.close()
-                        camera = null
-                    }
-
-                    override fun onError(
-                        device: CameraDevice,
-                        error: Int
-                    ) {
-                        device.close()
-                        camera = null
-                        onError("Camera error: $error")
+                    try {
+                        val jpeg = yuvToJpeg(image)
+                        if (jpeg.isNotEmpty()) {
+                            onFrame(jpeg)
+                        }
+                    } catch (t: Throwable) {
+                        onError(t)
+                    } finally {
+                        image.close()
                     }
                 },
                 handler
             )
-
-        } catch (_: SecurityException) {
-
-            onError("Camera permission was denied.")
-
-        } catch (e: Exception) {
-
-            onError(
-                e.message ?: "Could not open camera."
-            )
         }
-    }
 
-    private fun createCaptureSession() {
-
-        val device = camera ?: return
-        val surface = reader?.surface ?: return
+        running.set(true)
 
         try {
+            cameraManager.openCamera(
+                cameraId,
+                object : CameraDevice.StateCallback() {
 
-            device.createCaptureSession(
-                listOf(surface),
-                object : CameraCaptureSession.StateCallback() {
-
-                    override fun onConfigured(
-                        captureSession: CameraCaptureSession
-                    ) {
-
-                        session = captureSession
-
-                        try {
-
-                            val request =
-                                device.createCaptureRequest(
-                                    CameraDevice.TEMPLATE_RECORD
-                                )
-
-                            request.addTarget(surface)
-
-                            request.set(
-                                CaptureRequest.CONTROL_MODE,
-                                CameraMetadata.CONTROL_MODE_AUTO
-                            )
-
-                            captureSession.setRepeatingRequest(
-                                request.build(),
-                                null,
-                                handler
-                            )
-
-                        } catch (e: Exception) {
-
-                            onError(
-                                e.message
-                                    ?: "Camera capture failed."
-                            )
+                    override fun onOpened(camera: CameraDevice) {
+                        if (!running.get()) {
+                            camera.close()
+                            return
                         }
+
+                        cameraDevice = camera
+                        createCaptureSession(camera)
                     }
 
-                    override fun onConfigureFailed(
-                        captureSession: CameraCaptureSession
-                    ) {
+                    override fun onDisconnected(camera: CameraDevice) {
+                        camera.close()
+                        cameraDevice = null
+                    }
+
+                    override fun onError(camera: CameraDevice, error: Int) {
+                        camera.close()
+                        cameraDevice = null
                         onError(
-                            "Could not configure camera."
+                            IllegalStateException("Camera error: $error")
                         )
                     }
                 },
                 handler
             )
-
-        } catch (e: Exception) {
-
-            onError(
-                e.message ?: "Could not start camera."
-            )
+        } catch (t: Throwable) {
+            onError(t)
+            stop()
         }
     }
 
-    private fun findCamera(
-        manager: CameraManager,
-        lens: Lens
-    ): String? {
+    private fun createCaptureSession(camera: CameraDevice) {
+        val readerSurface = imageReader?.surface ?: return
 
-        for (id in manager.cameraIdList) {
+        camera.createCaptureSession(
+            listOf(readerSurface),
+            object : CameraCaptureSession.StateCallback() {
 
-            val characteristics =
-                manager.getCameraCharacteristics(id)
+                override fun onConfigured(session: CameraCaptureSession) {
+                    if (!running.get()) {
+                        session.close()
+                        return
+                    }
 
-            val facing =
-                characteristics.get(
-                    CameraCharacteristics.LENS_FACING
-                )
+                    captureSession = session
 
-            if (
-                lens == Lens.FRONT &&
-                facing == CameraCharacteristics.LENS_FACING_FRONT
-            ) {
-                return id
-            }
+                    try {
+                        val request =
+                            camera.createCaptureRequest(
+                                CameraDevice.TEMPLATE_PREVIEW
+                            ).apply {
+                                addTarget(readerSurface)
+                            }
 
-            if (
-                lens == Lens.BACK &&
-                facing == CameraCharacteristics.LENS_FACING_BACK
-            ) {
-                return id
-            }
-        }
-
-        return null
-    }
-
-    private fun yuv420ToJpeg(
-        image: android.media.Image
-    ): ByteArray {
-
-        val width = image.width
-        val height = image.height
-
-        val y = image.planes[0]
-        val u = image.planes[1]
-        val v = image.planes[2]
-
-        val yBuffer = y.buffer
-        val uBuffer = u.buffer
-        val vBuffer = v.buffer
-
-        val yRowStride = y.rowStride
-        val yPixelStride = y.pixelStride
-        val uRowStride = u.rowStride
-        val uPixelStride = u.pixelStride
-        val vRowStride = v.rowStride
-        val vPixelStride = v.pixelStride
-
-        val nv21 =
-            ByteArray(width * height * 3 / 2)
-
-        var offset = 0
-
-        for (row in 0 until height) {
-
-            val rowStart =
-                row * yRowStride
-
-            for (col in 0 until width) {
-
-                val index =
-                    rowStart + col * yPixelStride
-
-                if (index < yBuffer.limit()) {
-                    nv21[offset++] =
-                        yBuffer.get(index)
+                        session.setRepeatingRequest(
+                            request.build(),
+                            null,
+                            handler
+                        )
+                    } catch (t: Throwable) {
+                        onError(t)
+                    }
                 }
-            }
-        }
 
-        for (row in 0 until height / 2) {
+                override fun onConfigureFailed(
+                    session: CameraCaptureSession
+                ) {
+                    onError(
+                        IllegalStateException(
+                            "Unable to configure camera"
+                        )
+                    )
+                }
+            },
+            handler
+        )
+    }
 
-            for (col in 0 until width / 2) {
+    private fun yuvToJpeg(image: Image): ByteArray {
+        val planes = image.planes
+
+        val y = planes[0].buffer
+        val u = planes[1].buffer
+        val v = planes[2].buffer
+
+        val ySize = y.remaining()
+        val uSize = u.remaining()
+        val vSize = v.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        y.get(nv21, 0, ySize)
+
+        val chromaWidth = image.width / 2
+        val chromaHeight = image.height / 2
+
+        var outputIndex = ySize
+
+        for (row in 0 until chromaHeight) {
+            for (col in 0 until chromaWidth) {
+                val vIndex =
+                    row * planes[2].rowStride +
+                        col * planes[2].pixelStride
 
                 val uIndex =
-                    row * uRowStride +
-                        col * uPixelStride
+                    row * planes[1].rowStride +
+                        col * planes[1].pixelStride
 
-                val vIndex =
-                    row * vRowStride +
-                        col * vPixelStride
-
-                if (
-                    uIndex < uBuffer.limit() &&
-                    vIndex < vBuffer.limit()
-                ) {
-                    nv21[offset++] =
-                        vBuffer.get(vIndex)
-
-                    nv21[offset++] =
-                        uBuffer.get(uIndex)
+                if (vIndex < vSize && uIndex < uSize) {
+                    nv21[outputIndex++] = v.get(vIndex)
+                    nv21[outputIndex++] = u.get(uIndex)
                 }
             }
         }
 
-        val yuv =
-            YuvImage(
-                nv21,
-                ImageFormat.NV21,
-                width,
-                height,
-                null
-            )
-
-        val output =
-            ByteArrayOutputStream()
-
-        yuv.compressToJpeg(
-            Rect(0, 0, width, height),
-            70,
-            output
+        val yuvImage = android.graphics.YuvImage(
+            nv21,
+            ImageFormat.NV21,
+            image.width,
+            image.height,
+            null
         )
 
-        return output.toByteArray()
+        return ByteArrayOutputStream().use { output ->
+            yuvImage.compressToJpeg(
+                android.graphics.Rect(
+                    0,
+                    0,
+                    image.width,
+                    image.height
+                ),
+                JPEG_QUALITY,
+                output
+            )
+
+            output.toByteArray()
+        }
     }
 
     fun stop() {
+        running.set(false)
 
         try {
-            session?.stopRepeating()
-        } catch (_: Exception) {
+            captureSession?.stopRepeating()
+        } catch (_: Throwable) {
         }
 
         try {
-            session?.close()
-        } catch (_: Exception) {
+            captureSession?.close()
+        } catch (_: Throwable) {
         }
 
-        session = null
+        captureSession = null
 
         try {
-            camera?.close()
-        } catch (_: Exception) {
+            cameraDevice?.close()
+        } catch (_: Throwable) {
         }
 
-        camera = null
+        cameraDevice = null
 
         try {
-            reader?.close()
-        } catch (_: Exception) {
+            imageReader?.close()
+        } catch (_: Throwable) {
         }
 
-        reader = null
+        imageReader = null
 
-        try {
-            thread?.quitSafely()
-        } catch (_: Exception) {
-        }
-
+        thread?.quitSafely()
         thread = null
         handler = null
     }

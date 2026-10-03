@@ -30,19 +30,18 @@ class AuthActivity : AppCompatActivity() {
     private lateinit var nameInput: EditText
     private lateinit var emailInput: EditText
     private lateinit var passwordInput: EditText
-    private lateinit var confirmPasswordInput: EditText
-    private lateinit var primaryButton: MaterialButton
+    private lateinit var confirmInput: EditText
+    private lateinit var primary: MaterialButton
     private lateinit var switchButton: MaterialButton
-    private lateinit var titleText: TextView
-    private lateinit var subtitleText: TextView
+    private lateinit var title: TextView
+    private lateinit var subtitle: TextView
     private lateinit var nameLabel: TextView
     private lateinit var confirmLabel: TextView
-    private lateinit var statusText: TextView
+    private lateinit var status: TextView
 
-    private var creatingAccount = true
+    private var creating = true
 
     private val bg = Color.rgb(246, 251, 244)
-    private val surface = Color.WHITE
     private val textColor = Color.rgb(18, 33, 30)
     private val muted = Color.rgb(100, 115, 111)
     private val accent = Color.rgb(8, 127, 104)
@@ -50,18 +49,16 @@ class AuthActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        scope.launch {
-            try {
-                if (Supabase.client.auth.currentUserOrNull() != null) {
-                    openApp()
-                    return@launch
-                }
-            } catch (_: Exception) {}
-            buildUi()
+        if (Supabase.client.auth.currentUserOrNull() != null) {
+            openMain()
+            return
         }
+
+        buildUi()
     }
 
     private fun buildUi() {
+
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
@@ -92,37 +89,36 @@ class AuthActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
 
-        val brandSub = TextView(this).apply {
-            text = "DAILY ASSISTANT"
-            textSize = 11f
-            setTextColor(accent)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
-
-        content.addView(brand, lp())
-        content.addView(brandSub, lp(bottom = 28))
+        content.addView(
+            brand,
+            lp(bottom = 28)
+        )
 
         val card = MaterialCardView(this).apply {
-            setCardBackgroundColor(surface)
+            setCardBackgroundColor(Color.WHITE)
             radius = dp(24).toFloat()
             strokeWidth = dp(1)
             strokeColor = Color.rgb(225, 232, 228)
             cardElevation = 0f
-            setContentPadding(dp(24), dp(26), dp(24), dp(24))
+            setContentPadding(
+                dp(24),
+                dp(26),
+                dp(24),
+                dp(24)
+            )
         }
 
         val form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
 
-        titleText = TextView(this).apply {
+        title = TextView(this).apply {
             textSize = 25f
             setTextColor(textColor)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        subtitleText = TextView(this).apply {
+        subtitle = TextView(this).apply {
             textSize = 14f
             setTextColor(muted)
             setPadding(0, dp(8), 0, dp(24))
@@ -134,48 +130,48 @@ class AuthActivity : AppCompatActivity() {
         emailInput = input("Email address").apply {
             inputType =
                 InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                    InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
         }
 
         passwordInput = input("Password").apply {
             inputType =
                 InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
         confirmLabel = label("Confirm password")
-        confirmPasswordInput = input("Enter your password again").apply {
+
+        confirmInput = input("Enter your password again").apply {
             inputType =
                 InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
-        statusText = TextView(this).apply {
-            textSize = 13f
-            setTextColor(muted)
-            visibility = View.GONE
-            setPadding(0, dp(12), 0, 0)
-        }
-
-        primaryButton = MaterialButton(this).apply {
+        primary = MaterialButton(this).apply {
             setTextColor(Color.WHITE)
             setBackgroundColor(accent)
             cornerRadius = dp(16)
-            textSize = 15f
             isAllCaps = false
+            textSize = 15f
         }
 
         switchButton = MaterialButton(this).apply {
             setTextColor(textColor)
             setBackgroundColor(Color.TRANSPARENT)
             cornerRadius = dp(16)
-            textSize = 14f
             isAllCaps = false
-            strokeWidth = 0
+            textSize = 14f
         }
 
-        form.addView(titleText, lp())
-        form.addView(subtitleText, lp())
+        status = TextView(this).apply {
+            textSize = 13f
+            setTextColor(muted)
+            visibility = View.GONE
+            setPadding(0, dp(12), 0, 0)
+        }
+
+        form.addView(title, lp())
+        form.addView(subtitle, lp())
         form.addView(nameLabel, lp())
         form.addView(nameInput, lp(bottom = 14))
         form.addView(label("Email address"), lp())
@@ -183,10 +179,10 @@ class AuthActivity : AppCompatActivity() {
         form.addView(label("Password"), lp())
         form.addView(passwordInput, lp(bottom = 14))
         form.addView(confirmLabel, lp())
-        form.addView(confirmPasswordInput, lp(bottom = 18))
-        form.addView(primaryButton, lp(height = 54))
+        form.addView(confirmInput, lp(bottom = 18))
+        form.addView(primary, lp(height = 54))
         form.addView(switchButton, lp(height = 48))
-        form.addView(statusText, lp())
+        form.addView(status, lp())
 
         card.addView(
             form,
@@ -203,17 +199,6 @@ class AuthActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
-
-        val footer = TextView(this).apply {
-            text =
-                "Your conversations and saved information stay connected to your NETO account."
-            textSize = 12f
-            setTextColor(muted)
-            gravity = Gravity.CENTER
-            setPadding(dp(20), dp(22), dp(20), 0)
-        }
-
-        content.addView(footer, lp())
 
         scroll.addView(
             content,
@@ -234,17 +219,14 @@ class AuthActivity : AppCompatActivity() {
 
         setContentView(root)
 
-        primaryButton.setOnClickListener {
-            if (creatingAccount) {
-                createAccount()
-            } else {
-                signIn()
-            }
+        primary.setOnClickListener {
+            if (creating) createAccount()
+            else signIn()
         }
 
         switchButton.setOnClickListener {
-            if (!primaryButton.isEnabled) return@setOnClickListener
-            creatingAccount = !creatingAccount
+            if (!primary.isEnabled) return@setOnClickListener
+            creating = !creating
             updateMode()
         }
 
@@ -252,44 +234,52 @@ class AuthActivity : AppCompatActivity() {
     }
 
     private fun updateMode() {
-        if (creatingAccount) {
-            titleText.text = "Create your account"
-            subtitleText.text =
-                "Set up NETO once, then your conversations, memories and saved items stay with you."
-            primaryButton.text = "Create account"
-            switchButton.text = "Already have an account? Sign in"
+
+        if (creating) {
+            title.text = "Create your account"
+            subtitle.text =
+                "Set up NETO once, then your conversations stay with you."
+            primary.text = "Create account"
+            switchButton.text =
+                "Already have an account? Sign in"
 
             nameLabel.visibility = View.VISIBLE
             nameInput.visibility = View.VISIBLE
             confirmLabel.visibility = View.VISIBLE
-            confirmPasswordInput.visibility = View.VISIBLE
+            confirmInput.visibility = View.VISIBLE
         } else {
-            titleText.text = "Welcome back"
-            subtitleText.text =
-                "Sign in to continue your conversations with NETO."
-            primaryButton.text = "Sign in"
-            switchButton.text = "New to NETO? Create an account"
+            title.text = "Welcome back"
+            subtitle.text =
+                "Sign in to continue with NETO."
+            primary.text = "Sign in"
+            switchButton.text =
+                "New to NETO? Create an account"
 
             nameLabel.visibility = View.GONE
             nameInput.visibility = View.GONE
             confirmLabel.visibility = View.GONE
-            confirmPasswordInput.visibility = View.GONE
+            confirmInput.visibility = View.GONE
         }
-        statusText.visibility = View.GONE
+
+        status.visibility = View.GONE
     }
 
     private fun createAccount() {
+
         val name = nameInput.text.toString().trim()
         val email = emailInput.text.toString().trim()
         val password = passwordInput.text.toString()
-        val confirm = confirmPasswordInput.text.toString()
+        val confirm = confirmInput.text.toString()
 
         if (name.length < 2) {
             showError("Please enter your name.")
             return
         }
 
-        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+        if (!android.util.Patterns.EMAIL_ADDRESS
+                .matcher(email)
+                .matches()
+        ) {
             showError("Please enter a valid email address.")
             return
         }
@@ -308,31 +298,32 @@ class AuthActivity : AppCompatActivity() {
 
         scope.launch {
             try {
+
                 Supabase.client.auth.signUpWith(Email) {
                     this.email = email
                     this.password = password
+
                     data = buildJsonObject {
                         put("display_name", name)
                     }
                 }
 
-                val user = Supabase.client.auth.currentUserOrNull()
-
-                if (user != null) {
-                    openApp()
+                if (Supabase.client.auth.currentUserOrNull() != null) {
+                    openMain()
                 } else {
-                    showMessage(
-                        "Account created. Please confirm your email, then sign in."
-                    )
-                    creatingAccount = false
+                    creating = false
                     updateMode()
                     emailInput.setText(email)
-                    passwordInput.setText("")
-                    confirmPasswordInput.setText("")
+
+                    showMessage(
+                        "Account created. Confirm your email, then sign in."
+                    )
                 }
 
             } catch (e: Exception) {
-                showError(authError(e))
+                showError(
+                    e.message ?: "Account creation failed."
+                )
             } finally {
                 setBusy(false)
             }
@@ -340,10 +331,14 @@ class AuthActivity : AppCompatActivity() {
     }
 
     private fun signIn() {
+
         val email = emailInput.text.toString().trim()
         val password = passwordInput.text.toString()
 
-        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+        if (!android.util.Patterns.EMAIL_ADDRESS
+                .matcher(email)
+                .matches()
+        ) {
             showError("Please enter a valid email address.")
             return
         }
@@ -357,99 +352,87 @@ class AuthActivity : AppCompatActivity() {
 
         scope.launch {
             try {
+
                 Supabase.client.auth.signInWith(Email) {
                     this.email = email
                     this.password = password
                 }
 
-                val user = Supabase.client.auth.currentUserOrNull()
-                val session = Supabase.client.auth.currentSessionOrNull()
+                val session =
+                    Supabase.client.auth.currentSessionOrNull()
 
-                if (user == null || session == null) {
+                if (session == null) {
                     showError(
                         "NETO signed in unsuccessfully. No active session was created."
                     )
                     return@launch
                 }
 
-                showMessage("Signed in. Opening NETO...")
-                openApp()
+                openMain()
 
             } catch (e: Exception) {
-                showError(authError(e))
+                showError(
+                    e.message ?: "Authentication failed."
+                )
             } finally {
                 setBusy(false)
             }
         }
     }
 
-    private fun authError(error: Exception): String {
-        val message = error.message?.lowercase().orEmpty()
-        return when {
-            "invalid login credentials" in message ->
-                "The email or password is incorrect."
-            "email not confirmed" in message ->
-                "Please confirm your email address before signing in."
-            "user already registered" in message ->
-                "An account with this email already exists. Try signing in."
-            "network" in message ||
-            "timeout" in message ||
-            "unable to resolve" in message ->
-                "We couldn't connect to NETO. Check your internet connection."
-            else ->
-                "Authentication failed: ${error.message ?: "unknown error"}"
-        }
-    }
+    private fun openMain() {
 
-    private fun openApp() {
-        runOnUiThread {
-            try {
-                val intent = android.content.Intent(
-                    this,
-                    MainActivity::class.java
-                ).apply {
-                    flags =
-                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
-                }
-                startActivity(intent)
-                finish()
-            } catch (e: Exception) {
-                showError(
-                    "NETO could not open the main screen: ${e.message ?: "unknown error"}"
-                )
+        startActivity(
+            android.content.Intent(
+                this,
+                MainActivity::class.java
+            ).apply {
+                flags =
+                    android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-        }
+        )
+
+        finish()
     }
 
     private fun showError(message: String) {
+
         runOnUiThread {
-            statusText.text = message
-            statusText.setTextColor(Color.rgb(150, 55, 45))
-            statusText.visibility = View.VISIBLE
+            status.text = message
+            status.setTextColor(Color.rgb(150, 55, 45))
+            status.visibility = View.VISIBLE
         }
     }
 
     private fun showMessage(message: String) {
+
         runOnUiThread {
-            statusText.text = message
-            statusText.setTextColor(accent)
-            statusText.visibility = View.VISIBLE
+            status.text = message
+            status.setTextColor(accent)
+            status.visibility = View.VISIBLE
         }
     }
 
     private fun setBusy(busy: Boolean) {
+
         runOnUiThread {
-            primaryButton.isEnabled = !busy
+            primary.isEnabled = !busy
             switchButton.isEnabled = !busy
 
-            primaryButton.text =
+            primary.text =
                 if (busy) {
-                    if (creatingAccount) "Creating account..."
-                    else "Signing in..."
+                    if (creating) {
+                        "Creating account..."
+                    } else {
+                        "Signing in..."
+                    }
                 } else {
-                    if (creatingAccount) "Create account"
-                    else "Sign in"
+                    if (creating) {
+                        "Create account"
+                    } else {
+                        "Sign in"
+                    }
                 }
         }
     }
@@ -468,9 +451,8 @@ class AuthActivity : AppCompatActivity() {
             textSize = 15f
             setTextColor(textColor)
             setHintTextColor(muted)
-            background = null
-            setPadding(dp(16), 0, dp(16), 0)
             minHeight = dp(54)
+            setPadding(dp(16), 0, dp(16), 0)
             setBackgroundColor(Color.rgb(247, 249, 248))
         }
 

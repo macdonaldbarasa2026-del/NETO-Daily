@@ -1,1099 +1,1384 @@
 package com.netodaily.app
 
-import android.graphics.Color
-import android.os.Bundle
-import com.netodaily.app.media.NetoScreenFrameBus
-import android.media.projection.MediaProjectionManager
 import android.content.Intent
-import android.Manifest
-import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.ImageButton
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import androidx.activity.OnBackPressedCallback
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import android.widget.*
+import android.graphics.BitmapFactory
+import android.media.projection.MediaProjectionManager
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.setPadding
-import com.google.android.material.card.MaterialCardView
+import androidx.core.view.WindowCompat
+import com.netodaily.app.auth.AuthActivity
+import com.netodaily.app.data.NetoConversation
+import com.netodaily.app.data.NetoLocalStore
+import com.netodaily.app.data.NetoMessage
+import com.netodaily.app.ui.NetoOrbView
+import com.netodaily.app.live.NetoLiveSession
+import com.netodaily.app.vision.NetoVisionController
+import com.netodaily.app.vision.NetoVisualPermissionController
+import com.netodaily.app.vision.NetoVisualState
 import io.github.jan.supabase.auth.auth
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.cancel
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-
-import com.netodaily.app.media.NetoCameraController
-import com.netodaily.app.ui.NetoVoiceOrbView
+import kotlinx.coroutines.*
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-
-    private lateinit var root: FrameLayout
-    private lateinit var content: LinearLayout
-    private lateinit var orb: NetoVoiceOrbView
-    private lateinit var caption: TextView
-    private lateinit var captionSpeaker: TextView
-    private lateinit var composer: EditText
-    private lateinit var statusText: TextView
-
-    private var menuOpen = false
-    private var settingsOpen = false
-    private var historyOpen = false
-    private var aboutOpen = false
-    private var listening = false
-    private var pendingCameraFront = false
-
-    private val liveScope =
+    private val scope =
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private val liveClient by lazy {
-        GeminiLiveClient(
-            scope = liveScope,
+    private lateinit var store: NetoLocalStore
+    private lateinit var orb: NetoOrbView
+    private lateinit var messagesContainer: LinearLayout
+    private lateinit var scrollView: ScrollView
+    private lateinit var captionView: TextView
+    private lateinit var statusView: TextView
+    private lateinit var input: EditText
 
+    private var conversation: NetoConversation =
+        NetoConversation(
+            id = UUID.randomUUID().toString()
+        )
+
+    private var currentPanel: View? = null
+    private var busy = false
+
+    private lateinit var liveSession: NetoLiveSession
+    private lateinit var visionController: NetoVisionController
+    private lateinit var visualPermissions: NetoVisualPermissionController
+
+    private lateinit var visualPreviewCard: View
+    private lateinit var visualPreview: ImageView
+    private lateinit var visualPreviewLabel: TextView
+
+    private var visualState = NetoVisualState.None
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+
+        if (Supabase.client.auth.currentUserOrNull() == null) {
+            openAuth()
+            return
+        }
+
+        store = NetoLocalStore(this)
+        conversation =
+            store.loadCurrentConversation()
+                ?: NetoConversation(
+                    id = UUID.randomUUID().toString()
+                )
+
+        buildHome()
+        setupLiveAndVision()
+        restoreConversation()
+    }
+
+    private fun setupLiveAndVision() {
+        liveSession = NetoLiveSession(
+            scope = scope,
             onStateChanged = { state ->
                 runOnUiThread {
-                    if (::orb.isInitialized) orb.setState(state)
+                    when (state) {
+                        NetoLiveSession.State.IDLE -> {
+                            orb.setState(NetoOrbView.State.IDLE)
+                            statusView.text = "Ready"
+                        }
 
-                    statusText.text = when (state) {
-                        NetoVoiceOrbView.State.IDLE -> "Ready"
-                        NetoVoiceOrbView.State.LISTENING -> "Listening"
-                        NetoVoiceOrbView.State.THINKING -> "Thinking"
-                        NetoVoiceOrbView.State.SPEAKING -> "Speaking"
+                        NetoLiveSession.State.LISTENING -> {
+                            orb.setState(NetoOrbView.State.LISTENING)
+                            statusView.text =
+                                "Listening — speak naturally · tap orb to end"
+                        }
+
+                        NetoLiveSession.State.THINKING -> {
+                            orb.setState(NetoOrbView.State.THINKING)
+                            statusView.text =
+                                "Neto is preparing a reply"
+                        }
+
+                        NetoLiveSession.State.SPEAKING -> {
+                            orb.setState(NetoOrbView.State.SPEAKING)
+                            statusView.text =
+                                "Speaking — tap orb to end"
+                        }
                     }
                 }
             },
 
-            onCaption = { speaker, message ->
+            onCaption = { speaker, text ->
                 runOnUiThread {
-                    captionSpeaker.text = speaker
-                    caption.text = message
+                    if (text.isNotBlank()) {
+                        captionView.text =
+                            if (speaker.isBlank()) {
+                                text
+                            } else {
+                                "$speaker: $text"
+                            }
+
+                        captionView.visibility = View.VISIBLE
+                    }
                 }
             },
 
             onAudioLevel = { level ->
                 runOnUiThread {
-                    if (::orb.isInitialized) orb.setAudioLevel(level)
+                    if (::orb.isInitialized) {
+                        orb.setAudioLevel(level)
+                    }
                 }
             },
 
             onError = { message ->
                 runOnUiThread {
-                    listening = false
-                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
-                    if (::orb.isInitialized) orb.setAudioLevel(0f)
-                    statusText.text = "Ready"
-                    captionSpeaker.text = "NETO"
-                    caption.text = message
+                    captionView.text =
+                        message.ifBlank {
+                            "Live voice is unavailable."
+                        }
+
+                    captionView.visibility = View.VISIBLE
+
+                    if (::orb.isInitialized) {
+                        orb.setState(NetoOrbView.State.IDLE)
+                    }
+
+                    statusView.text = "Ready"
                 }
             }
         )
-    }
 
-    private val bg = Color.rgb(238, 243, 241)
-    private val surface = Color.rgb(251, 252, 251)
-    private val textColor = Color.rgb(18, 33, 30)
-    private val muted = Color.rgb(100, 115, 111)
-    private val accent = Color.rgb(8, 127, 104)
+        visionController = NetoVisionController(
+            context = this,
+            liveSession = liveSession,
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+            onPreviewFrame = { frame ->
+                runOnUiThread {
+                    val bitmap =
+                        BitmapFactory.decodeByteArray(
+                            frame,
+                            0,
+                            frame.size
+                        )
 
-        if (Supabase.client.auth.currentUserOrNull() == null) {
-            startActivity(Intent(this, com.netodaily.app.auth.AuthActivity::class.java))
-            finish()
-            return
-        }
+                    if (bitmap != null) {
+                        visualPreview.setImageBitmap(bitmap)
+                        visualPreviewCard.visibility = View.VISIBLE
+                    }
+                }
+            },
 
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
-        WindowInsetsControllerCompatHelper.lightBars(window)
+            onStateChanged = { state ->
+                runOnUiThread {
+                    when (state) {
+                        NetoVisionController.State.FRONT_CAMERA -> {
+                            visualState = NetoVisualState.FrontCamera
+                            visualPreviewLabel.text = "Front camera"
+                            visualPreviewCard.visibility = View.VISIBLE
+                        }
 
-        try {
-            buildUi()
-        } catch (t: Throwable) {
-            showStartupError(t)
-            return
-        }
+                        NetoVisionController.State.BACK_CAMERA -> {
+                            visualState = NetoVisualState.BackCamera
+                            visualPreviewLabel.text = "Back camera"
+                            visualPreviewCard.visibility = View.VISIBLE
+                        }
 
-        onBackPressedDispatcher.addCallback(
-            this,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    when {
-                        aboutOpen -> closePanel()
-                        settingsOpen -> closePanel()
-                        historyOpen -> closePanel()
-                        menuOpen -> closeMenu()
-                        else -> finish()
+                        NetoVisionController.State.SCREEN -> {
+                            visualState = NetoVisualState.Screen
+                            visualPreviewLabel.text = "Screen sharing"
+                            visualPreviewCard.visibility = View.VISIBLE
+                        }
+
+                        NetoVisionController.State.OFF -> {
+                            visualState = NetoVisualState.None
+                            visualPreviewCard.visibility = View.GONE
+                            visualPreview.setImageDrawable(null)
+                        }
                     }
                 }
             }
         )
-    }
 
-    private fun showStartupError(error: Throwable) {
-        val trace = java.io.StringWriter()
-        error.printStackTrace(java.io.PrintWriter(trace))
+        visualPermissions =
+            NetoVisualPermissionController(
+                activity = this,
 
-        val view = ScrollView(this).apply {
-            setBackgroundColor(bg)
-            addView(
-                TextView(this@MainActivity).apply {
-                    text = "NETO could not open the main screen.\n\n$trace"
-                    textSize = 13f
-                    setTextColor(textColor)
-                    setPadding(dp(24), dp(32), dp(24), dp(32))
+                onCameraGranted = {
+                    visionController.startFrontCamera()
+                },
+
+                onScreenShareResult = { resultCode, data ->
+                    visionController.startScreenShare(
+                        resultCode,
+                        data
+                    )
                 }
             )
-        }
 
-        setContentView(view)
-    }
-
-    private fun buildUi() {
-        root = FrameLayout(this)
-        root.setBackgroundColor(bg)
-
-        content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        root.addView(
-            content,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-
-        buildHome()
-
-        setContentView(root)
+        visionController.start()
     }
 
     private fun buildHome() {
-        content.removeAllViews()
-
-        val top = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(8))
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(246, 251, 244))
         }
 
-        val menu = iconButton(R.drawable.ic_menu)
-        menu.setOnClickListener { openMenu() }
+        root.addView(
+            topBar(),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(64)
+            )
+        )
 
-        val brand = TextView(this).apply {
-            text = "NETO"
-            textSize = 18f
-            setTextColor(textColor)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
-        val settings = iconButton(R.drawable.ic_more)
-        settings.setOnClickListener { openSettings() }
-
-        top.addView(
-            menu,
-            LinearLayout.LayoutParams(dp(48), dp(48))
-        )
-
-        top.addView(
-            brand,
-            LinearLayout.LayoutParams(0, dp(48), 1f)
-        )
-
-        top.addView(
-            settings,
-            LinearLayout.LayoutParams(dp(48), dp(48))
-        )
-
-        content.addView(
-            top,
+        body.addView(
+            TextView(this).apply {
+                text = "What can we work through?"
+                textSize = 25f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(31, 55, 39))
+                gravity = Gravity.CENTER
+            },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
 
-        val title = TextView(this).apply {
-            text = "What can we work through?"
-            textSize = 28f
-            setTextColor(textColor)
-            gravity = Gravity.CENTER
-            typeface = android.graphics.Typeface.create(
-                android.graphics.Typeface.DEFAULT,
-                android.graphics.Typeface.BOLD
-            )
-        }
-
-        content.addView(
-            title,
+        body.addView(
+            Space(this),
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(80)
-            ).apply {
-                topMargin = dp(18)
-            }
+                1,
+                dp(8)
+            )
         )
 
-        val stage = FrameLayout(this).apply {
-            clipChildren = false
-            clipToPadding = false
-        }
+        orb = NetoOrbView(this).apply {
+            setState(NetoOrbView.State.IDLE)
 
-        orb = NetoVoiceOrbView(this).apply {
-            setState(NetoVoiceOrbView.State.IDLE)
             setOnClickListener {
                 toggleVoice()
             }
         }
 
-        stage.addView(
+        body.addView(
             orb,
-            FrameLayout.LayoutParams(dp(290), dp(290), Gravity.CENTER)
-        )
-
-        content.addView(
-            stage,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(330)
-            )
+                dp(290),
+                dp(290)
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
         )
 
-        statusText = TextView(this).apply {
+        statusView = TextView(this).apply {
             text = "Ready"
-            textSize = 15f
-            setTextColor(textColor)
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(46, 106, 69))
             gravity = Gravity.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
-        content.addView(
-            statusText,
+        body.addView(
+            statusView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(30)
             )
         )
 
-        val voiceHint = TextView(this).apply {
+        val hint = TextView(this).apply {
             text = "Tap the orb to speak"
             textSize = 13f
-            setTextColor(muted)
+            setTextColor(Color.rgb(91, 111, 96))
             gravity = Gravity.CENTER
         }
 
-        content.addView(
-            voiceHint,
+        body.addView(
+            hint,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(32)
+                dp(28)
             )
         )
 
-        val captionCard = MaterialCardView(this).apply {
-            radius = dp(22).toFloat()
-            cardElevation = 0f
-            setCardBackgroundColor(surface)
-            strokeColor = Color.argb(28, 18, 33, 30)
-            strokeWidth = dp(1)
-            visibility = View.GONE
-        }
-
-        val captionBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18))
-        }
-
-        captionSpeaker = TextView(this).apply {
-            text = "You"
-            textSize = 11f
-            setTextColor(accent)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-
-        caption = TextView(this).apply {
-            textSize = 16f
-            setTextColor(textColor)
-        }
-
-        captionBox.addView(captionSpeaker)
-        captionBox.addView(caption)
-
-        captionCard.addView(captionBox)
-
-        content.addView(
-            captionCard,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(90)
-            ).apply {
-                leftMargin = dp(20)
-                rightMargin = dp(20)
-            }
+        val visualLayout = layoutInflater.inflate(
+            com.netodaily.app.R.layout.view_visual_preview,
+            body,
+            false
         )
 
-        val spacer = View(this)
+        visualPreviewCard = visualLayout.findViewById(
+            com.netodaily.app.R.id.visualPreviewCard
+        )
 
-        content.addView(
-            spacer,
+        visualPreview = visualLayout.findViewById(
+            com.netodaily.app.R.id.visualPreview
+        )
+
+        visualPreviewLabel = visualLayout.findViewById(
+            com.netodaily.app.R.id.visualPreviewLabel
+        )
+
+        val closeVisual = visualLayout.findViewById<ImageButton>(
+            com.netodaily.app.R.id.visualPreviewClose
+        )
+
+        closeVisual.setOnClickListener {
+            stopVisualInput()
+        }
+
+        body.addView(visualPreviewCard)
+
+        scrollView = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            setPadding(0, dp(4), 0, dp(4))
+        }
+
+        messagesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(4), dp(2), dp(4))
+        }
+
+        scrollView.addView(
+            messagesContainer,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        body.addView(
+            scrollView,
             LinearLayout.LayoutParams(
-                1,
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f
             )
         )
 
-        val composerCard = MaterialCardView(this).apply {
-            radius = dp(27).toFloat()
-            cardElevation = 0f
-            setCardBackgroundColor(surface)
-            strokeColor = Color.argb(28, 18, 33, 30)
-            strokeWidth = dp(1)
+        captionView = TextView(this).apply {
+            text = ""
+            textSize = 14f
+            setTextColor(Color.rgb(55, 74, 61))
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            visibility = View.GONE
         }
 
-        val composerRow = LinearLayout(this).apply {
+        body.addView(
+            captionView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        )
+
+        body.addView(
+            composer(),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(62)
+            )
+        )
+
+        root.addView(
+            body,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        setContentView(root)
+    }
+
+    private fun topBar(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(14), 0, dp(14), 0)
         }
 
-        val attach = iconButton(R.drawable.ic_add)
+        val menu = button("☰")
+        menu.setOnClickListener {
+            showMenu()
+        }
+
+        bar.addView(
+            menu,
+            LinearLayout.LayoutParams(
+                dp(48),
+                dp(48)
+            )
+        )
+
+        bar.addView(
+            TextView(this).apply {
+                text = "NETO"
+                textSize = 21f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(46, 106, 69))
+                gravity = Gravity.CENTER_VERTICAL
+            },
+            LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f
+            )
+        )
+
+        val more = button("⋮")
+        more.setOnClickListener {
+            showQuickActions()
+        }
+
+        bar.addView(
+            more,
+            LinearLayout.LayoutParams(
+                dp(48),
+                dp(48)
+            )
+        )
+
+        return bar
+    }
+
+    private fun composer(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setBackgroundColor(Color.WHITE)
+        }
+
+        val attach = button("+")
         attach.setOnClickListener {
-            composer.hint = "Attachment support coming from NETO Inbox"
+            showInbox()
         }
 
-        composer = EditText(this).apply {
-            setTextColor(textColor)
-            setHintTextColor(muted)
+        row.addView(
+            attach,
+            LinearLayout.LayoutParams(
+                dp(48),
+                dp(48)
+            )
+        )
+
+        input = EditText(this).apply {
+            hint = "Type a message…"
             textSize = 15f
-            hint = "Type a message..."
+            singleLine = true
+            setTextColor(Color.rgb(30, 45, 34))
+            setHintTextColor(Color.rgb(125, 140, 129))
+            setPadding(dp(10), 0, dp(10), 0)
             background = null
-            setSingleLine(false)
-            maxLines = 4
-            setPadding(dp(12), 0, dp(8), 0)
         }
 
-        val mic = iconButton(R.drawable.ic_mic)
+        row.addView(
+            input,
+            LinearLayout.LayoutParams(
+                0,
+                dp(50),
+                1f
+            )
+        )
+
+        val mic = button("●")
         mic.setOnClickListener {
             toggleVoice()
         }
 
-        val send = iconButton(R.drawable.ic_send)
-        send.setOnClickListener {
-            submitText()
-        }
-
-        composerRow.addView(
-            attach,
-            LinearLayout.LayoutParams(dp(42), dp(42))
-        )
-
-        composerRow.addView(
-            composer,
-            LinearLayout.LayoutParams(0, dp(52), 1f)
-        )
-
-        composerRow.addView(
+        row.addView(
             mic,
-            LinearLayout.LayoutParams(dp(42), dp(42))
+            LinearLayout.LayoutParams(
+                dp(48),
+                dp(48)
+            )
         )
 
-        composerRow.addView(
+        val send = button("↑")
+        send.setOnClickListener {
+            sendTypedMessage()
+        }
+
+        row.addView(
             send,
-            LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                leftMargin = dp(4)
-            }
-        )
-
-        composerCard.addView(composerRow)
-
-        content.addView(
-            composerCard,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(64)
-            ).apply {
-                leftMargin = dp(16)
-                rightMargin = dp(16)
-                bottomMargin = dp(12)
-            }
+                dp(48),
+                dp(48)
+            )
         )
+
+        input.setOnEditorActionListener { _, _, _ ->
+            sendTypedMessage()
+            true
+        }
+
+        return row
     }
 
-    private fun toggleVoice() {
+    private fun restoreConversation() {
+        messagesContainer.removeAllViews()
 
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                7001
-            )
-            return
+        conversation.messages.forEach {
+            addMessageBubble(it)
         }
 
-        if (listening) {
-
-            listening = false
-
-            liveScope.launch {
-                liveClient.stop()
-            }
-
-            return
-        }
-
-        listening = true
-
-        captionSpeaker.text = "You"
-        caption.text = "Listening..."
-
-        liveScope.launch {
-            liveClient.start()
-        }
-    }
-
-    private fun submitText() {
-        val message = composer.text.toString().trim()
-        if (message.isEmpty()) return
-
-        composer.setText("")
-        statusText.text = "Thinking"
-        orb.setState(NetoVoiceOrbView.State.THINKING)
-
-        captionSpeaker.text = "You"
-        caption.text = message
-
-        scope.launch(Dispatchers.IO) {
-            val result = callNetoChat(message)
-
-            launch(Dispatchers.Main) {
-                if (result.first) {
-                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
-                    statusText.text = "Ready"
-                    captionSpeaker.text = "NETO"
-                    caption.text = result.second
-                } else {
-                    if (::orb.isInitialized) orb.setState(NetoVoiceOrbView.State.IDLE)
-                    statusText.text = "Ready"
-                    captionSpeaker.text = "NETO"
-                    caption.text = result.second
-                }
+        if (conversation.messages.isNotEmpty()) {
+            scrollToBottom()
+            val last = conversation.messages.last()
+            if (last.role == NetoMessage.Role.NETO) {
+                captionView.text = last.text
+                captionView.visibility = View.VISIBLE
             }
         }
     }
 
-    private fun callNetoChat(message: String): Pair<Boolean, String> {
-        return try {
-            val session = Supabase.client.auth.currentSessionOrNull()
-                ?: return false to "Please sign in to continue."
-
-            val url = URL(
-                "${BuildConfig.SUPABASE_URL}/functions/v1/neto-chat"
-            )
-
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 20_000
-            connection.readTimeout = 60_000
-            connection.doOutput = true
-
-            connection.setRequestProperty(
-                "Authorization",
-                "Bearer ${session.accessToken}"
-            )
-
-            connection.setRequestProperty(
-                "apikey",
-                BuildConfig.SUPABASE_PUBLISHABLE_KEY
-            )
-
-            connection.setRequestProperty(
-                "Content-Type",
-                "application/json"
-            )
-
-            val body = JSONObject()
-                .put("message", message)
-
-            connection.outputStream.use {
-                it.write(body.toString().toByteArray(Charsets.UTF_8))
-            }
-
-            val stream =
-                if (connection.responseCode in 200..299)
-                    connection.inputStream
+    private fun addMessageBubble(message: NetoMessage) {
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity =
+                if (message.role == NetoMessage.Role.USER)
+                    Gravity.END
                 else
-                    connection.errorStream
+                    Gravity.START
 
-            val response = stream.bufferedReader().use { it.readText() }
-
-            if (connection.responseCode !in 200..299) {
-                val error = try {
-                    JSONObject(response).optString(
-                        "error",
-                        "NETO could not complete the request."
-                    )
-                } catch (_: Exception) {
-                    "NETO could not complete the request."
-                }
-
-                return false to error
-            }
-
-            val json = JSONObject(response)
-
-            val answer = json.optString(
-                "message",
-                "NETO received your message."
-            )
-
-            true to answer
-        } catch (e: Exception) {
-            false to "NETO could not connect right now. Please try again."
-        }
-    }
-
-    private fun openMenu() {
-        if (menuOpen) return
-
-        menuOpen = true
-
-        val scrim = View(this).apply {
-            setBackgroundColor(Color.argb(70, 0, 0, 0))
-            setOnClickListener { closeMenu() }
+            setPadding(dp(4), dp(3), dp(4), dp(3))
         }
 
-        root.addView(
-            scrim,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+        val bubble = TextView(this).apply {
+            text = message.text
+            textSize = 15f
+            setTextColor(
+                if (message.role == NetoMessage.Role.USER)
+                    Color.WHITE
+                else
+                    Color.rgb(36, 53, 42)
             )
-        )
-
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(surface)
-            elevation = dp(12).toFloat()
             setPadding(
-                dp(24),
-                dp(32),
-                dp(18),
-                dp(24)
+                dp(14),
+                dp(10),
+                dp(14),
+                dp(10)
             )
-        }
-
-        val heading = TextView(this).apply {
-            text = "NETO"
-            textSize = 20f
-            setTextColor(textColor)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "Voice-first AI assistant"
-            textSize = 13f
-            setTextColor(muted)
-        }
-
-        panel.addView(heading)
-        panel.addView(
-            subtitle,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(36)
-            )
-        )
-
-        addMenuItem(panel, "New chat") {
-            closeMenu()
-            buildHome()
-        }
-
-        addMenuItem(panel, "History") {
-            closeMenu()
-            openHistory()
-        }
-
-        addMenuItem(panel, "Settings") {
-            closeMenu()
-            openSettings()
-        }
-
-        addMenuItem(panel, "About creator") {
-            closeMenu()
-            openAbout()
-        }
-
-        root.addView(
-            panel,
-            FrameLayout.LayoutParams(
-                dp(310),
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.START
-            )
-        )
-    }
-
-    private fun addMenuItem(
-        parent: LinearLayout,
-        label: String,
-        action: () -> Unit
-    ) {
-        val item = TextView(this).apply {
-            text = label
-            textSize = 16f
-            setTextColor(textColor)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), 0, dp(14), 0)
-            setOnClickListener { action() }
-            background = roundedBackground(
-                Color.argb(15, 8, 127, 104),
-                dp(16).toFloat()
-            )
-        }
-
-        parent.addView(
-            item,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(54)
-            ).apply {
-                topMargin = dp(6)
-            }
-        )
-    }
-
-    private fun closeMenu() {
-        if (!menuOpen) return
-
-        menuOpen = false
-
-        while (root.childCount > 1) {
-            root.removeViewAt(root.childCount - 1)
-        }
-    }
-
-    private fun openSettings() {
-        settingsOpen = true
-        showPanel(
-            "Settings",
-            listOf(
-                "Voice" to "Sky",
-                "Speaking speed" to "Normal",
-                "Captions" to "On",
-                "Memories" to "Managed by NETO"
-            )
-        )
-    }
-
-    private fun openHistory() {
-        historyOpen = true
-        showPanel(
-            "History",
-            listOf(
-                "Conversations" to "Your saved NETO conversations appear here.",
-                "Search" to "Search across your previous conversations."
-            )
-        )
-    }
-
-    private fun openAbout() {
-        aboutOpen = true
-        showPanel(
-            "About NETO",
-            listOf(
-                "Creator" to "Macdonald Barasa",
-                "Product" to "NETO AI assistant",
-                "Purpose" to "Ask, do, remember, find and act."
-            )
-        )
-    }
-
-    private fun showPanel(
-        title: String,
-        rows: List<Pair<String, String>>
-    ) {
-        val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(80, 0, 0, 0))
-            setOnClickListener { closePanel() }
-        }
-
-        val card = MaterialCardView(this).apply {
-            radius = dp(28).toFloat()
-            cardElevation = dp(8).toFloat()
-            setCardBackgroundColor(surface)
-            setOnClickListener { }
-        }
-
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22))
-        }
-
-        val header = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val back = iconButton(R.drawable.ic_back)
-        back.setOnClickListener { closePanel() }
-
-        val heading = TextView(this).apply {
-            text = title
-            textSize = 20f
-            setTextColor(textColor)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        header.addView(
-            back,
-            LinearLayout.LayoutParams(dp(42), dp(42))
-        )
-
-        header.addView(
-            heading,
-            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-                leftMargin = dp(10)
-            }
-        )
-
-        box.addView(header)
-
-        rows.forEach { (label, value) ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(4), dp(14), dp(4), dp(14))
-            }
-
-            val labelView = TextView(this).apply {
-                text = label
-                textSize = 13f
-                setTextColor(muted)
-            }
-
-            val valueView = TextView(this).apply {
-                text = value
-                textSize = 16f
-                setTextColor(textColor)
-            }
-
-            row.addView(labelView)
-            row.addView(valueView)
-
-            box.addView(row)
-        }
-
-        card.addView(box)
-
-        overlay.addView(
-            card,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            ).apply {
-                leftMargin = dp(12)
-                rightMargin = dp(12)
-                bottomMargin = dp(12)
-            }
-        )
-
-        root.addView(
-            overlay,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-    }
-
-    private fun closePanel() {
-        settingsOpen = false
-        historyOpen = false
-        aboutOpen = false
-
-        if (root.childCount > 1) {
-            root.removeViewAt(root.childCount - 1)
-        }
-    }
-
-    private fun iconButton(icon: Int): ImageButton {
-        return ImageButton(this).apply {
-            setImageResource(icon)
-            setColorFilter(textColor)
-            background = roundedBackground(
-                surface,
-                dp(50).toFloat()
-            )
-            elevation = dp(1).toFloat()
-            scaleType = android.widget.ImageView.ScaleType.CENTER
-            contentDescription = null
-        }
-    }
-
-    private fun circleButton(label: String): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 20f
-            setTextColor(textColor)
-            gravity = Gravity.CENTER
-            background = roundedBackground(
-                surface,
-                dp(50).toFloat()
-            )
-            elevation = dp(1).toFloat()
-        }
-    }
-
-    private fun roundedBackground(
-        color: Int,
-        radius: Float
-    ): android.graphics.drawable.GradientDrawable {
-        return android.graphics.drawable.GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = radius
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(
-            requestCode,
-            permissions,
-            grantResults
-        )
-
-        if (requestCode == 7001) {
-            if (
-                grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED
-            ) {
-                toggleVoice()
-            } else {
-                statusText.text = "Ready"
-                captionSpeaker.text = "NETO"
-                caption.text =
-                    "Microphone access is needed for voice conversations."
-            }
-            return
-        }
-
-        if (
-            requestCode == 7003 &&
-            grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
-            startCamera(
-                if (pendingCameraFront)
-                    NetoCameraController.Lens.FRONT
+            setBackgroundColor(
+                if (message.role == NetoMessage.Role.USER)
+                    Color.rgb(46, 106, 69)
                 else
-                    NetoCameraController.Lens.BACK
+                    Color.WHITE
             )
+        }
+
+        wrapper.addView(
+            bubble,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                maxWidth = dp(330)
+            }
+        )
+
+        messagesContainer.addView(
+            wrapper,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+    }
+
+    private fun sendTypedMessage() {
+        if (busy) return
+
+        val text = input.text?.toString()?.trim().orEmpty()
+
+        if (text.isEmpty()) return
+
+        input.setText("")
+
+        val userMessage = NetoMessage(
+            id = UUID.randomUUID().toString(),
+            role = NetoMessage.Role.USER,
+            text = text
+        )
+
+        conversation = conversation.copy(
+            title = makeConversationTitle(
+                conversation,
+                text
+            ),
+            updatedAt = System.currentTimeMillis(),
+            messages = conversation.messages + userMessage
+        )
+
+        addMessageBubble(userMessage)
+        persistConversation()
+        scrollToBottom()
+
+        requestNeto(text)
+    }
+
+    private fun requestNeto(text: String) {
+        busy = true
+
+        orb.setState(NetoOrbView.State.THINKING)
+        statusView.text = "Neto is preparing a reply"
+
+        captionView.visibility = View.VISIBLE
+        captionView.text = "Neto is preparing a reply…"
+
+        scope.launch {
+            try {
+                val session =
+                    Supabase.client.auth.currentSessionOrNull()
+
+                if (session == null) {
+                    openAuth()
+                    return@launch
+                }
+
+                val response = withContext(Dispatchers.IO) {
+                    val url =
+                        "${BuildConfig.SUPABASE_URL}/functions/v1/neto-chat"
+
+                    val connection =
+                        java.net.URL(url).openConnection()
+                            as java.net.HttpURLConnection
+
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = 20_000
+                    connection.readTimeout = 60_000
+                    connection.doOutput = true
+
+                    connection.setRequestProperty(
+                        "Content-Type",
+                        "application/json"
+                    )
+
+                    connection.setRequestProperty(
+                        "Authorization",
+                        "Bearer ${session.accessToken}"
+                    )
+
+                    connection.setRequestProperty(
+                        "apikey",
+                        BuildConfig.SUPABASE_PUBLISHABLE_KEY
+                    )
+
+                    val body = buildJsonObject {
+                        put("message", text)
+                    }.toString()
+
+                    connection.outputStream.use {
+                        it.write(body.toByteArray())
+                    }
+
+                    val code = connection.responseCode
+
+                    val stream =
+                        if (code in 200..299)
+                            connection.inputStream
+                        else
+                            connection.errorStream
+
+                    val result =
+                        stream?.bufferedReader()?.use {
+                            it.readText()
+                        }.orEmpty()
+
+                    connection.disconnect()
+
+                    if (code !in 200..299) {
+                        throw IllegalStateException(
+                            "NETO request failed ($code): $result"
+                        )
+                    }
+
+                    result
+                }
+
+                val answer =
+                    extractMessage(response)
+
+                val netoMessage = NetoMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = NetoMessage.Role.NETO,
+                    text = answer
+                )
+
+                conversation = conversation.copy(
+                    updatedAt = System.currentTimeMillis(),
+                    messages =
+                        conversation.messages + netoMessage
+                )
+
+                addMessageBubble(netoMessage)
+
+                captionView.text = answer
+                captionView.visibility = View.VISIBLE
+
+                orb.setState(NetoOrbView.State.IDLE)
+                statusView.text = "Ready"
+
+                persistConversation()
+                scrollToBottom()
+
+            } catch (error: Throwable) {
+                val message =
+                    error.message
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "Something went wrong."
+
+                captionView.text = message
+                captionView.visibility = View.VISIBLE
+
+                orb.setState(NetoOrbView.State.IDLE)
+                statusView.text = "Ready"
+            } finally {
+                busy = false
+            }
         }
     }
 
-    private val cameraController by lazy {
-        NetoCameraController(
-            this,
-            onFrame = { jpeg ->
-                liveClient.sendVideoFrame(jpeg)
-            },
-            onError = { message ->
-                runOnUiThread {
-                    android.widget.Toast.makeText(
-                        this,
-                        message,
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
+    private fun extractMessage(raw: String): String {
+        return runCatching {
+            val json =
+                kotlinx.serialization.json.Json.parseToJsonElement(raw)
+
+            val objectValue =
+                json as? kotlinx.serialization.json.JsonObject
+
+            objectValue?.get("message")
+                ?.toString()
+                ?.trim('"')
+                ?: objectValue?.get("text")
+                    ?.toString()
+                    ?.trim('"')
+                ?: raw
+        }.getOrDefault(raw)
+            .ifBlank {
+                "I received an empty response."
+            }
+    }
+
+    private fun makeConversationTitle(
+        current: NetoConversation,
+        text: String
+    ): String {
+        if (
+            current.messages.isNotEmpty() &&
+            current.title != "New chat"
+        ) {
+            return current.title
+        }
+
+        return text
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(42)
+            .ifBlank { "New chat" }
+    }
+
+    private fun persistConversation() {
+        store.saveCurrentConversation(conversation)
+    }
+
+    private fun newChat() {
+        if (conversation.messages.isNotEmpty()) {
+            store.archiveConversation(conversation)
+        }
+
+        conversation = NetoConversation(
+            id = UUID.randomUUID().toString()
+        )
+
+        store.saveCurrentConversation(conversation)
+
+        messagesContainer.removeAllViews()
+        captionView.text = ""
+        captionView.visibility = View.GONE
+        input.setText("")
+
+        orb.setState(NetoOrbView.State.IDLE)
+        statusView.text = "Ready"
+
+        closePanel()
+    }
+
+    private fun showHistory() {
+        closePanel()
+
+        val panel = panel("History")
+
+        val history = store.loadHistory()
+
+        if (history.isEmpty()) {
+            panel.addView(
+                TextView(this).apply {
+                    text = "Your completed conversations will appear here."
+                    textSize = 15f
+                    setTextColor(Color.DKGRAY)
+                    setPadding(dp(8), dp(16), dp(8), dp(16))
+                }
+            )
+        } else {
+            history.forEach { item ->
+                val row = menuRow(
+                    item.title,
+                    "${item.messages.size} messages"
+                )
+
+                row.setOnClickListener {
+                    loadConversation(item)
+                }
+
+                panel.addView(row)
+            }
+        }
+
+        showPanel(panel)
+    }
+
+    private fun loadConversation(item: NetoConversation) {
+        if (conversation.messages.isNotEmpty()) {
+            store.archiveConversation(conversation)
+        }
+
+        conversation = item
+        store.saveCurrentConversation(conversation)
+
+        restoreConversation()
+        closePanel()
+    }
+
+    private fun showMenu() {
+        val panel = panel("NETO")
+
+        panel.addView(
+            menuRow("New chat", "Start a fresh conversation").apply {
+                setOnClickListener {
+                    newChat()
                 }
             }
         )
-    }
 
-    private fun requestCamera(
-        front: Boolean
-    ) {
-
-        pendingCameraFront = front
-
-        if (
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.CAMERA),
-                7003
-            )
-
-            return
-        }
-
-        startCamera(
-            if (front)
-                NetoCameraController.Lens.FRONT
-            else
-                NetoCameraController.Lens.BACK
+        panel.addView(
+            menuRow("History", "Previous conversations").apply {
+                setOnClickListener {
+                    showHistory()
+                }
+            }
         )
+
+        panel.addView(
+            menuRow("NETO Inbox", "Photos, files, PDFs and links").apply {
+                setOnClickListener {
+                    showInbox()
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Settings", "Voice, captions and memories").apply {
+                setOnClickListener {
+                    showSettings()
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("About creator", "About NETO").apply {
+                setOnClickListener {
+                    showAbout()
+                }
+            }
+        )
+
+        showPanel(panel)
     }
 
-    private fun startCamera(
-        lens: NetoCameraController.Lens
-    ) {
-        cameraController.start(lens)
+    private fun showQuickActions() {
+        val panel = panel("Quick actions")
+
+        panel.addView(
+            menuRow("New chat", "Start over").apply {
+                setOnClickListener {
+                    newChat()
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Inbox", "Bring something to NETO").apply {
+                setOnClickListener {
+                    showInbox()
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Settings", "Customize NETO").apply {
+                setOnClickListener {
+                    showSettings()
+                }
+            }
+        )
+
+        showPanel(panel)
     }
 
-    private fun requestScreenShare() {
+    private fun showInbox() {
+        val panel = panel("NETO Inbox")
 
-        val manager =
-            getSystemService(
-                MEDIA_PROJECTION_SERVICE
-            ) as MediaProjectionManager
+        panel.addView(
+            menuRow("Photo", "Choose a photo").apply {
+                setOnClickListener {
+                    chooseFile("image/*")
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Screenshot", "Choose an image").apply {
+                setOnClickListener {
+                    chooseFile("image/*")
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("PDF", "Choose a PDF document").apply {
+                setOnClickListener {
+                    chooseFile("application/pdf")
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Text / document", "Choose a file").apply {
+                setOnClickListener {
+                    chooseFile("*/*")
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow("Link", "Paste a web link").apply {
+                setOnClickListener {
+                    showLinkDialog()
+                }
+            }
+        )
+
+        showPanel(panel)
+    }
+
+    private fun chooseFile(type: String) {
+        val intent =
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                this.type = type
+            }
 
         startActivityForResult(
-            manager.createScreenCaptureIntent(),
-            7002
+            intent,
+            REQUEST_FILE
         )
+
+        closePanel()
     }
 
-
+    @Suppress("DEPRECATION")
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
         data: Intent?
     ) {
-
         super.onActivityResult(
             requestCode,
             resultCode,
             data
         )
 
-        if (requestCode == 7002) {
+        if (
+            requestCode == REQUEST_FILE &&
+            resultCode == RESULT_OK
+        ) {
+            val uri = data?.data ?: return
 
-            if (
-                resultCode != RESULT_OK ||
-                data == null
-            ) {
-
-                android.widget.Toast.makeText(
-                    this,
-                    "Screen sharing was cancelled.",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-
-                return
-            }
-
-            val serviceIntent =
-                Intent(
-                    this,
-                    com.netodaily.app.media
-                        .NetoMediaCaptureService::class.java
-                ).apply {
-
-                    action =
-                        com.netodaily.app.media
-                            .NetoMediaCaptureService
-                            .ACTION_START
-
-                    putExtra(
-                        com.netodaily.app.media
-                            .NetoMediaCaptureService
-                            .EXTRA_RESULT_CODE,
-                        resultCode
-                    )
-
-                    putExtra(
-                        com.netodaily.app.media
-                            .NetoMediaCaptureService
-                            .EXTRA_RESULT_DATA,
-                        data
-                    )
-                }
-
-            androidx.core.content.ContextCompat
-                .startForegroundService(
-                    this,
-                    serviceIntent
-                )
-
-            NetoScreenFrameBus.setListener { jpeg ->
-                liveClient.sendVideoFrame(jpeg)
-            }
-
-            android.widget.Toast.makeText(
-                this,
-                "NETO is viewing your screen",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
+            captionView.visibility = View.VISIBLE
+            captionView.text =
+                "Added to NETO Inbox: ${uri.lastPathSegment ?: "file"}"
         }
     }
 
-    override fun onDestroy() {
+    private fun showLinkDialog() {
+        val edit = EditText(this).apply {
+            hint = "https://example.com"
+            singleLine = true
+        }
 
-        NetoScreenFrameBus.setListener(null)
+        AlertDialogBuilder()
+            .setTitle("Add a link")
+            .setView(edit)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Add") { _, _ ->
+                val link = edit.text.toString().trim()
 
-        cameraController.stop()
+                if (link.isNotEmpty()) {
+                    captionView.visibility = View.VISIBLE
+                    captionView.text =
+                        "Added to NETO Inbox: $link"
+                }
+            }
+            .show()
+    }
 
-        liveClient.release()
+    private fun showSettings() {
+        val panel = panel("Settings")
 
-        liveScope.cancel()
+        panel.addView(
+            menuRow(
+                "Voice Sky",
+                store.getSetting(
+                    "voice_sky",
+                    "Voice Sky"
+                )
+            )
+        )
 
-        super.onDestroy()
+        panel.addView(
+            menuRow(
+                "Speaking speed",
+                "${store.getFloat(
+                    "speaking_speed",
+                    1f
+                )}×"
+            )
+        )
+
+        panel.addView(
+            menuRow(
+                "Captions",
+                if (
+                    store.getBoolean(
+                        "captions",
+                        true
+                    )
+                ) "On" else "Off"
+            ).apply {
+                setOnClickListener {
+                    val current =
+                        store.getBoolean(
+                            "captions",
+                            true
+                        )
+
+                    store.saveBoolean(
+                        "captions",
+                        !current
+                    )
+
+                    showSettings()
+                }
+            }
+        )
+
+        panel.addView(
+            menuRow(
+                "Caption style",
+                store.getSetting(
+                    "caption_style",
+                    "Clean"
+                )
+            )
+        )
+
+        panel.addView(
+            menuRow(
+                "Memories",
+                "Saved conversation context"
+            )
+        )
+
+        panel.addView(
+            menuRow(
+                "Saved items",
+                "Things NETO saved for you"
+            )
+        )
+
+        panel.addView(
+            menuRow(
+                "Sign out",
+                "Sign out of this device"
+            ).apply {
+                setOnClickListener {
+                    signOut()
+                }
+            }
+        )
+
+        showPanel(panel)
+    }
+
+    private fun showAbout() {
+        val panel = panel("About NETO")
+
+        panel.addView(
+            TextView(this).apply {
+                text =
+                    """
+                    NETO
+
+                    Your voice-first AI assistant.
+
+                    Created by Macdonald Barasa
+
+                    NETO is designed to help you ask, do, remember, find and act.
+                    """.trimIndent()
+
+                textSize = 16f
+                setTextColor(Color.rgb(45, 61, 49))
+                setPadding(
+                    dp(8),
+                    dp(18),
+                    dp(8),
+                    dp(18)
+                )
+            }
+        )
+
+        showPanel(panel)
+    }
+
+    private fun toggleVoice() {
+        if (!::liveSession.isInitialized) {
+            captionView.text = "Live voice is still starting."
+            captionView.visibility = View.VISIBLE
+            return
+        }
+
+        when (orb.currentState()) {
+            NetoOrbView.State.IDLE -> {
+                captionView.visibility = View.GONE
+                orb.setState(NetoOrbView.State.THINKING)
+                statusView.text = "Neto is preparing a reply"
+                liveSession.start()
+            }
+
+            NetoOrbView.State.LISTENING -> {
+                liveSession.stop()
+                orb.setState(NetoOrbView.State.IDLE)
+                statusView.text = "Ready"
+            }
+
+            NetoOrbView.State.THINKING,
+            NetoOrbView.State.SPEAKING -> {
+                liveSession.stop()
+                orb.setState(NetoOrbView.State.IDLE)
+                statusView.text = "Ready"
+            }
+        }
+    }
+
+    private fun signOut() {
+        scope.launch {
+            runCatching {
+                Supabase.client.auth.signOut()
+            }
+
+            openAuth()
+        }
+    }
+
+    private fun openAuth() {
+        startActivity(
+            Intent(this, AuthActivity::class.java)
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+        )
+
+        finish()
+    }
+
+    private fun panel(title: String): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(
+                dp(18),
+                dp(18),
+                dp(18),
+                dp(18)
+            )
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 22f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(46, 106, 69))
+                    setPadding(
+                        0,
+                        0,
+                        0,
+                        dp(14)
+                    )
+                }
+            )
+        }
+    }
+
+    private fun menuRow(
+        title: String,
+        subtitle: String
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(12),
+                dp(12),
+                dp(12),
+                dp(12)
+            )
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(35, 50, 39))
+                }
+            )
+
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 13f
+                    setTextColor(Color.rgb(100, 115, 103))
+                    setPadding(
+                        0,
+                        dp(3),
+                        0,
+                        0
+                    )
+                }
+            )
+        }
+    }
+
+    private fun showPanel(view: View) {
+        closePanel()
+
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(70, 0, 0, 0))
+            setPadding(
+                dp(12),
+                dp(76),
+                dp(12),
+                dp(12)
+            )
+        }
+
+        val card = view
+
+        overlay.addView(
+            card,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        card.elevation = dp(12).toFloat()
+
+        addContentView(
+            overlay,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        currentPanel = overlay
+
+        overlay.setOnClickListener {
+            closePanel()
+        }
+
+        card.setOnClickListener {
+            // Keep clicks inside the panel from closing it.
+        }
+    }
+
+    private fun closePanel() {
+        currentPanel?.let {
+            (it.parent as? ViewGroup)?.removeView(it)
+        }
+
+        currentPanel = null
+    }
+
+    private fun scrollToBottom() {
+        scrollView.post {
+            scrollView.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    private fun button(text: String): TextView {
+        return TextView(this).apply {
+            this.text = text
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(46, 106, 69))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            isClickable = true
+            isFocusable = true
+        }
     }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
-}
 
-private object WindowInsetsControllerCompatHelper {
-
-    fun lightBars(window: Window) {
-
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-
-            window.insetsController?.setSystemBarsAppearance(
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-
-        } else {
-
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-                    View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+    override fun onBackPressed() {
+        if (currentPanel != null) {
+            closePanel()
+            return
         }
+
+        super.onBackPressed()
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun AlertDialogBuilder(): android.app.AlertDialog.Builder =
+        android.app.AlertDialog.Builder(this)
+
+    companion object {
+        private const val REQUEST_FILE = 4101
     }
 }
