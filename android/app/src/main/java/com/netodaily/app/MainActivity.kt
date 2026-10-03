@@ -116,7 +116,12 @@ class MainActivity : AppCompatActivity() {
         window.navigationBarColor = bg
         WindowInsetsControllerCompatHelper.lightBars(window)
 
-        buildUi()
+        try {
+            buildUi()
+        } catch (e: Exception) {
+            showStartupError(e)
+            return
+        }
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -132,6 +137,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun showStartupError(error: Exception) {
+        val message = error.message ?: error.javaClass.simpleName
+        val view = TextView(this).apply {
+            text = "NETO could not open the main screen.\n\n$message"
+            textSize = 16f
+            setTextColor(textColor)
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            gravity = Gravity.CENTER
+        }
+        setContentView(view)
     }
 
     private fun buildUi() {

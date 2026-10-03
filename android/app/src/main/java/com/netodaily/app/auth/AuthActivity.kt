@@ -421,10 +421,11 @@ class AuthActivity : AppCompatActivity() {
                     MainActivity::class.java
                 ).apply {
                     flags =
-                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
             )
+            finish()
         } catch (e: Exception) {
             showError(
                 "NETO could not open the main screen: ${e.message ?: "unknown error"}"
