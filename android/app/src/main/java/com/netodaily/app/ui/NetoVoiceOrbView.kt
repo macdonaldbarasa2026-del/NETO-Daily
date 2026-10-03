@@ -79,7 +79,7 @@ class NetoVoiceOrbView @JvmOverloads constructor(
         }
 
         val baseRadius = size * 0.27f
-        val pulse = sin(phase * 2.0) * size * 0.008f
+        val pulse = sin(phase.toDouble() * 2.0).toFloat() * size * 0.008f
         val reactiveRadius = baseRadius + pulse + audioLevel * size * 0.045f
 
         paint.shader = RadialGradient(
@@ -123,10 +123,10 @@ class NetoVoiceOrbView @JvmOverloads constructor(
             val angle = particle.angle + phase * speed * (index % 3 + 1)
 
             val radius = reactiveRadius *
-                (1.18f + sin(phase * 2f + index) * 0.055f)
+                (1.18f + sin((phase * 2f + index).toDouble()).toFloat() * 0.055f)
 
-            val x = cx + cos(angle) * radius
-            val y = cy + sin(angle) * radius
+            val x = cx + cos(angle.toDouble()).toFloat() * radius
+            val y = cy + sin(angle.toDouble()).toFloat() * radius
 
             val alpha = (45 + activity * 160).toInt().coerceIn(0, 210)
 

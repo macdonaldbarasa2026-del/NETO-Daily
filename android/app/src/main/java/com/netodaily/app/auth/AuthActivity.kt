@@ -15,7 +15,8 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.netodaily.app.Supabase
-import io.github.jan.supabase.auth.providers.Email
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.providers.builtin.Email
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -42,7 +43,7 @@ class AuthActivity : AppCompatActivity() {
 
     private val bg = Color.rgb(246, 251, 244)
     private val surface = Color.WHITE
-    private val text = Color.rgb(18, 33, 30)
+    private val textColor = Color.rgb(18, 33, 30)
     private val muted = Color.rgb(100, 115, 111)
     private val accent = Color.rgb(8, 127, 104)
 
@@ -68,7 +69,7 @@ class AuthActivity : AppCompatActivity() {
         }
 
         val scroll = ScrollView(this).apply {
-            fillViewport = true
+            setFillViewport(true)
         }
 
         val content = LinearLayout(this).apply {
@@ -80,7 +81,7 @@ class AuthActivity : AppCompatActivity() {
         val brand = TextView(this).apply {
             text = "NETO"
             textSize = 34f
-            setTextColor(text)
+            setTextColor(textColor)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             letterSpacing = 0.08f
             gravity = Gravity.CENTER
@@ -113,7 +114,7 @@ class AuthActivity : AppCompatActivity() {
 
         titleText = TextView(this).apply {
             textSize = 25f
-            setTextColor(text)
+            setTextColor(textColor)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
@@ -158,7 +159,7 @@ class AuthActivity : AppCompatActivity() {
         }
 
         switchButton = MaterialButton(this).apply {
-            setTextColor(text)
+            setTextColor(textColor)
             setBackgroundColor(Color.TRANSPARENT)
             cornerRadius = dp(16)
             textSize = 14f
@@ -420,7 +421,7 @@ class AuthActivity : AppCompatActivity() {
         TextView(this).apply {
             text = value
             textSize = 13f
-            setTextColor(text)
+            setTextColor(textColor)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
 
@@ -428,7 +429,7 @@ class AuthActivity : AppCompatActivity() {
         EditText(this).apply {
             hint = hintText
             textSize = 15f
-            setTextColor(text)
+            setTextColor(textColor)
             setHintTextColor(muted)
             background = null
             setPadding(dp(16), 0, dp(16), 0)

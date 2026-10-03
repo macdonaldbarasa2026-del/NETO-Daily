@@ -29,11 +29,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 import com.netodaily.app.media.NetoCameraController
+import com.netodaily.app.ui.NetoVoiceOrbView
 
 class MainActivity : AppCompatActivity() {
 
@@ -52,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     private var historyOpen = false
     private var aboutOpen = false
     private var listening = false
+    private var pendingCameraFront = false
 
     private val liveScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -351,7 +354,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             hint = "Type a message..."
             background = null
-            singleLine = false
+            setSingleLine(false)
             maxLines = 4
             setPadding(dp(12), 0, dp(8), 0)
         }
@@ -870,7 +873,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
+        
+        if (
+            requestCode == 7003 &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            startCamera(
+                if (pendingCameraFront)
+                    NetoCameraController.Lens.FRONT
+                else
+                    NetoCameraController.Lens.BACK
+            )
+            return
+        }
 
     private val cameraController by lazy {
         NetoCameraController(
@@ -893,6 +909,8 @@ class MainActivity : AppCompatActivity() {
     private fun requestCamera(
         front: Boolean
     ) {
+
+        pendingCameraFront = front
 
         if (
             ContextCompat.checkSelfPermission(
@@ -921,35 +939,7 @@ class MainActivity : AppCompatActivity() {
     private fun startCamera(
         lens: NetoCameraController.Lens
     ) {
-
-        val cameraId =
-            cameraController.findCamera(lens)
-
-        if (cameraId == null) {
-
-            android.widget.Toast.makeText(
-                this,
-                "Camera not available",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        android.widget.Toast.makeText(
-            this,
-            if (
-                lens ==
-                NetoCameraController.Lens.FRONT
-            )
-                "Front camera ready"
-            else
-                "Back camera ready",
-            android.widget.Toast.LENGTH_SHORT
-        ).show()
-
-        // Camera streaming will be connected to
-        // the Gemini Live session in the next step.
+        cameraController.start(lens)
     }
 
     private fun requestScreenShare() {
@@ -1044,15 +1034,6 @@ class MainActivity : AppCompatActivity() {
         NetoScreenFrameBus.setListener(null)
 
         cameraController.stop()
-
-        liveScope.launch {
-            liveClient.release()
-        }
-
-        liveScope.cancel()
-
-        super.onDestroy()
-    }
 
         liveScope.launch {
             liveClient.release()

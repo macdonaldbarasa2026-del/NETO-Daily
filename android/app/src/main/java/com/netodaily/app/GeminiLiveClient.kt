@@ -5,15 +5,18 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import com.netodaily.app.ui.NetoVoiceOrbView
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.url
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
+import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +24,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -41,11 +46,17 @@ class GeminiLiveClient(
         private const val OUTPUT_RATE = 24_000
         private const val INPUT_BUFFER = 4096
         private const val MODEL = "models/gemini-3.8-live"
+        private const val LIVE_URL =
+            "wss://generativelanguage.googleapis.com/" +
+                "ws/google.ai.generativelanguage.v1beta." +
+                "GenerativeService.BidiGenerateContentConstrained"
     }
 
     private val client = HttpClient(Android) {
         install(WebSockets)
     }
+
+    private val sendMutex = Mutex()
 
     private var socket: WebSocketSession? = null
     private var microphone: AudioRecord? = null
@@ -186,28 +197,18 @@ class GeminiLiveClient(
 
     private suspend fun connect(token: String) {
 
-        client.webSocket(
-            request = {
-                url(
-                    "wss://generativelanguage.googleapis.com/" +
-                        "ws/google.ai.generativelanguage.v1beta." +
-                        "GenerativeService." +
-                        "BidiGenerateContentConstrained" +
-                        "?access_token=$token"
-                )
-            }
-        ) {
+        val session = client.webSocketSession {
+            url(LIVE_URL)
+            url.parameters.append("access_token", token)
+        }
 
-            socket = this
-            running = true
+        socket = session
+        running = true
 
-            sendSetup()
+        session.sendSetup()
 
-            receiveJob = scope.launch {
-                receiveMessages(this@webSocket)
-            }
-
-            receiveJob?.join()
+        receiveJob = scope.launch(Dispatchers.IO) {
+            receiveMessages(session)
         }
     }
 
@@ -463,9 +464,8 @@ class GeminiLiveClient(
     private suspend fun sendAudio(
         bytes: ByteArray
     ) {
-
-        val session =
-            socket ?: return
+        val session = socket ?: return
+        if (!running) return
 
         val encoded =
             android.util.Base64.encodeToString(
@@ -477,27 +477,25 @@ class GeminiLiveClient(
             JSONObject()
                 .put(
                     "realtimeInput",
-                    JSONObject()
-                        .put(
-                            "mediaChunks",
-                            JSONArray().put(
-                                JSONObject()
-                                    .put(
-                                        "mimeType",
-                                        "audio/pcm;rate=16000"
-                                    )
-                                    .put(
-                                        "data",
-                                        encoded
-                                    )
+                    JSONObject().put(
+                        "audio",
+                        JSONObject()
+                            .put("data", encoded)
+                            .put(
+                                "mimeType",
+                                "audio/pcm;rate=16000"
                             )
-                        )
+                    )
                 )
 
         try {
-            session.send(
-                Frame.Text(message.toString())
-            )
+            sendMutex.withLock {
+                if (running && socket === session) {
+                    session.send(
+                        Frame.Text(message.toString())
+                    )
+                }
+            }
         } catch (_: Exception) {
         }
     }
@@ -617,16 +615,12 @@ class GeminiLiveClient(
     fun sendVideoFrame(
         jpeg: ByteArray
     ) {
-
         if (!running) return
 
-        scope.launch {
-
-            val session =
-                socket ?: return@launch
+        scope.launch(Dispatchers.IO) {
+            val session = socket ?: return@launch
 
             try {
-
                 val encoded =
                     android.util.Base64.encodeToString(
                         jpeg,
@@ -637,27 +631,24 @@ class GeminiLiveClient(
                     JSONObject()
                         .put(
                             "realtimeInput",
-                            JSONObject()
-                                .put(
-                                    "video",
-                                    JSONObject()
-                                        .put(
-                                            "data",
-                                            encoded
-                                        )
-                                        .put(
-                                            "mimeType",
-                                            "image/jpeg"
-                                        )
-                                )
+                            JSONObject().put(
+                                "video",
+                                JSONObject()
+                                    .put("data", encoded)
+                                    .put(
+                                        "mimeType",
+                                        "image/jpeg"
+                                    )
+                            )
                         )
 
-                session.send(
-                    Frame.Text(
-                        message.toString()
-                    )
-                )
-
+                sendMutex.withLock {
+                    if (running && socket === session) {
+                        session.send(
+                            Frame.Text(message.toString())
+                        )
+                    }
+                }
             } catch (_: Exception) {
             }
         }
