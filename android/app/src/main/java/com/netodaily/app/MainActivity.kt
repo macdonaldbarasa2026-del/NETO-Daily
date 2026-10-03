@@ -118,8 +118,8 @@ class MainActivity : AppCompatActivity() {
 
         try {
             buildUi()
-        } catch (e: Exception) {
-            showStartupError(e)
+        } catch (t: Throwable) {
+            showStartupError(t)
             return
         }
 
@@ -139,15 +139,22 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun showStartupError(error: Exception) {
-        val message = error.message ?: error.javaClass.simpleName
-        val view = TextView(this).apply {
-            text = "NETO could not open the main screen.\n\n$message"
-            textSize = 16f
-            setTextColor(textColor)
-            setPadding(dp(24), dp(24), dp(24), dp(24))
-            gravity = Gravity.CENTER
+    private fun showStartupError(error: Throwable) {
+        val trace = java.io.StringWriter()
+        error.printStackTrace(java.io.PrintWriter(trace))
+
+        val view = ScrollView(this).apply {
+            setBackgroundColor(bg)
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = "NETO could not open the main screen.\n\n$trace"
+                    textSize = 13f
+                    setTextColor(textColor)
+                    setPadding(dp(24), dp(32), dp(24), dp(32))
+                }
+            )
         }
+
         setContentView(view)
     }
 
