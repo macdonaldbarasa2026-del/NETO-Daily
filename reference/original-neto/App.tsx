@@ -1,0 +1,1715 @@
+/**
+ * Neto — voice-first AI assistant
+ * Creator: Macdonald Barasa
+ */
+import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type ReactNode } from "react";
+import { Menu, Settings, Plus, Clock, Mic, MicOff, Camera, Video, X, Send, Volume2, VolumeX, Download, UserRound, ArrowLeft, ImagePlus, Trash2, Search, Smartphone, ExternalLink, Copy, RotateCcw, Square, WifiOff } from "lucide-react";
+import { uploadAttachment, signInWithGoogle, signInWithNativeGoogleToken, logout, onAuthChange, saveConversation, loadRecentConversations, clearAllConversations } from "./lib/firebase";
+import { executeAndroidCommand, getAndroidCapabilities, isAndroidAction, parseAndroidCommand, type AndroidAction, type AndroidCommand, type AndroidCapabilities } from "./lib/androidControl";
+import { detectUserIntent } from "./lib/intent";
+import { getAdaptiveProfile, buildAdaptiveSuggestions } from "./lib/adaptiveProfile";
+import { shouldUseWebSearch } from "./lib/webSearch";
+
+type Status = "idle" | "listening" | "thinking" | "speaking";
+type Theme = "light" | "dark" | "midnight" | "warm" | "contrast";
+
+type Message = { role: "user" | "model"; parts: { text: string }[] };
+type ImageAttachment = { name: string; mimeType: string; url: string; storagePath: string; size: number; text?: string };
+type NativeAction = AndroidAction;
+type CaptionSpeaker = "human" | "ai";
+type CaptionLine = { id: number; speaker: CaptionSpeaker; text: string; final?: boolean };
+
+
+const CREATOR = { name: "Macdonald Barasa", role: "Creator of Neto" };
+const APP_IDENTITY = { name: "Neto", company: "Neto", product: "Neto AI assistant", creator: CREATOR.name };
+const THEMES: { id: Theme; label: string; description: string }[] = [
+  { id: "light", label: "Light", description: "Clean GPT-style light interface" },
+  { id: "dark", label: "Dark", description: "Low-light assistant interface" },
+  { id: "midnight", label: "Midnight", description: "Deep blue-violet voice studio" },
+  { id: "warm", label: "Warm", description: "Soft amber conversational mode" },
+  { id: "contrast", label: "High contrast", description: "Maximum visual contrast" },
+];
+
+
+function OrbSparkles({ status, energy }: { status: Status; energy: number }) {
+  const particles = useMemo(() => Array.from({ length: 34 }, (_, i) => ({
+    id: i,
+    x: 8 + ((i * 37) % 84),
+    y: 7 + ((i * 61) % 86),
+    size: 2 + (i % 4),
+    delay: ((i * 0.17) % 2.8).toFixed(2),
+    duration: (2.2 + (i % 5) * 0.45).toFixed(2),
+    drift: ((i % 2 ? 1 : -1) * (8 + (i % 7) * 2)).toFixed(0),
+  })), []);
+  const active = status !== 'idle';
+  const strength = Math.min(1, Math.max(0.08, energy));
+  return (
+    <div className={`orb-sparkles ${active ? 'is-active' : ''} status-${status}`} aria-hidden='true' style={{ '--spark-strength': strength } as CSSProperties}>
+      {particles.map(p => <span key={p.id} className='orb-sparkle' style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.size, height: p.size, animationDelay: `${p.delay}s`, animationDuration: `${p.duration}s`, '--spark-drift': `${p.drift}px` } as CSSProperties} />)}
+    </div>
+  );
+}
+
+function ParticleOrb({ energy }: { energy: number }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const points = useMemo(() => Array.from({ length: 920 }, (_, i) => {
+    const y = 1 - (i / 919) * 2;
+    const radius = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = i * 2.3999632297;
+    return { x: Math.cos(theta) * radius, y, z: Math.sin(theta) * radius, size: 0.55 + (i % 5) * 0.12, phase: (i * 0.71) % (Math.PI * 2) };
+  }), []);
+  useEffect(() => {
+    const canvas = canvasRef.current; const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    let raf = 0;
+    const draw = (time: number) => {
+      const size = Math.min(canvas.clientWidth, canvas.clientHeight); const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (canvas.width !== Math.round(size * dpr) || canvas.height !== Math.round(size * dpr)) { canvas.width = Math.round(size * dpr); canvas.height = Math.round(size * dpr); }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, size, size);
+      const center = size / 2; const radius = size * 0.44; const rotation = time * 0.000055; const pulse = 1 + Math.max(0, energy - 0.12) * 0.08;
+      const glow = context.createRadialGradient(center, center, 0, center, center, radius * .82);
+      glow.addColorStop(0, "rgba(255,248,238,.9)"); glow.addColorStop(.3, "rgba(255,220,184,.28)"); glow.addColorStop(1, "rgba(255,153,72,0)");
+      context.fillStyle = glow; context.beginPath(); context.arc(center, center, radius * .82, 0, Math.PI * 2); context.fill();
+      points.map(point => { const x = point.x * Math.cos(rotation) - point.z * Math.sin(rotation); const z = point.x * Math.sin(rotation) + point.z * Math.cos(rotation); return { ...point, x, z }; }).sort((a, b) => a.z - b.z).forEach(point => {
+        const depth = (point.z + 1) / 2; const wobble = 1 + Math.sin(time * .0012 + point.phase) * .045 * Math.max(energy, .15);
+        const dot = Math.max(.45, point.size * (.62 + depth * .62) * wobble);
+        context.globalAlpha = (.18 + depth * .82) * (.42 + ((point.phase % 1) * .35));
+        context.fillStyle = point.phase % 3 < 1 ? "#fff0dd" : (point.phase % 2 < 1 ? "#ffc28e" : "#ff9b52");
+        context.beginPath(); context.arc(center + point.x * radius * pulse, center + point.y * radius * pulse, dot, 0, Math.PI * 2); context.fill();
+      });
+      context.globalAlpha = 1; raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw); return () => cancelAnimationFrame(raf);
+  }, [energy, points]);
+  return <canvas ref={canvasRef} className="particle-orb-canvas" aria-hidden="true" />;
+}
+
+function WordReveal({ text, active }: { text: string; active: boolean }) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const [visibleCount, setVisibleCount] = useState(0);
+
+  useEffect(() => {
+    setVisibleCount(current => Math.min(current, words.length));
+    if (!words.length || visibleCount >= words.length) return;
+    const timer = window.setInterval(() => {
+      setVisibleCount(current => current >= words.length ? current : current + 1);
+    }, active ? 72 : 28);
+    return () => window.clearInterval(timer);
+  }, [text, active, words.length, visibleCount]);
+
+  return <>{words.slice(0, visibleCount).join(" ")}{visibleCount > 0 && visibleCount < words.length ? " " : ""}</>;
+}
+
+export default function App() {
+  const [status, setStatus] = useState<Status>("idle");
+  const [transcript, setTranscript] = useState("");
+  const [draftText, setDraftText] = useState("");
+  const [imageAttachment, setImageAttachment] = useState<ImageAttachment | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingFileName, setUploadingFileName] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [clearHistoryConfirmOpen, setClearHistoryConfirmOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [voice, setVoice] = useState("Sky");
+  const [speed, setSpeed] = useState(1);
+  const [language, setLanguage] = useState(() => localStorage.getItem("voice-orb-lang") || "en-US");
+  // Voice mode uses the server WebSocket and Gemini Live by default.
+  const [voiceMode, setVoiceMode] = useState(true);
+  const [aiMode, setAiMode] = useState<"normal" | "pro">(() => (localStorage.getItem("neto-ai-mode") as "normal" | "pro") || "normal");
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [videoConversationActive, setVideoConversationActive] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("voice-orb-theme") as Theme) || "light");
+  const [orbStyle, setOrbStyle] = useState<"classic" | "particle">(() => localStorage.getItem("neto-orb-style") === "particle" ? "particle" : "classic");
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("user");
+  const [chatHistory, setChatHistory] = useState<Message[]>([]);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [intentHint, setIntentHint] = useState("");
+  const [selectedIntent, setSelectedIntent] = useState<string | null>(null);
+  const [adaptiveMode, setAdaptiveMode] = useState("default");
+  const [adaptivePace, setAdaptivePace] = useState<"fast" | "balanced" | "calm">("balanced");
+  const [adaptiveSuggestions, setAdaptiveSuggestions] = useState<string[]>([]);
+  const [compactMode, setCompactMode] = useState(false);
+  const [connectors, setConnectors] = useState<{ id: string; name: string; connected: boolean; requiresConsent: boolean; scopes: string[]; privacy: string; status: string }[]>([]);
+  const [connectorMessage, setConnectorMessage] = useState("");
+  const [connectorBusy, setConnectorBusy] = useState(false);
+  const fetchConnectors = useCallback(async () => {
+    try {
+      const response = await fetch("/api/connectors/status");
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data?.connectors)) setConnectors(data.connectors);
+    } catch (error) {
+      console.warn("Failed to load connector status", error);
+    }
+  }, []);
+
+  const handleConnectorAction = useCallback(async (provider: string, action: "connect" | "disconnect") => {
+    setConnectorBusy(true);
+    setConnectorMessage("");
+    try {
+      if (action === "disconnect") {
+        const response = await fetch("/api/connectors/disconnect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        setConnectorMessage(payload?.message || "Connector disconnected.");
+        if (response.ok) await fetchConnectors();
+        return;
+      }
+
+      const response = await fetch("/api/connectors/oauth/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setConnectorMessage(payload?.message || "Connector setup is not available yet.");
+        return;
+      }
+
+      if (payload?.authUrl) {
+        const popup = window.open(payload.authUrl, "neto_connector", "width=520,height=700,noopener,noreferrer");
+        if (!popup) {
+          setConnectorMessage("Popup blocked. Please allow popups and try again.");
+          return;
+        }
+
+        const interval = window.setInterval(async () => {
+          if (popup.closed) {
+            window.clearInterval(interval);
+            await fetchConnectors();
+            setConnectorMessage("Google authorization completed. Your connector is now ready to use.");
+          }
+        }, 800);
+
+        setConnectorMessage(payload.message || "Secure sign-in opened. Complete the Google prompt to continue.");
+        return;
+      }
+
+      setConnectorMessage(payload?.message || "Connector flow started.");
+      if (response.ok) await fetchConnectors();
+    } catch (error: any) {
+      setConnectorMessage(error?.message || "Connector request failed.");
+    } finally {
+      setConnectorBusy(false);
+    }
+  }, [fetchConnectors]);
+
+  const filteredChatHistory = useMemo(() => {
+    if (!historySearchQuery.trim()) return chatHistory;
+    const q = historySearchQuery.toLowerCase().trim();
+    return chatHistory.filter(m => m.parts.some(p => p.text?.toLowerCase().includes(q)));
+  }, [chatHistory, historySearchQuery]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthChange((user) => {
+      setCurrentUser(user);
+      if (user) {
+        loadRecentConversations().then((conversations) => {
+          if (conversations && conversations.length > 0) {
+            setChatHistory((conversations[0] as { messages?: Message[] }).messages || []);
+          }
+        });
+      } else {
+        setChatHistory([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    void fetchConnectors();
+  }, [fetchConnectors]);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [installDismissed, setInstallDismissed] = useState(() => localStorage.getItem("voice-orb-install-dismissed") === "1");
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [italicCaptions, setItalicCaptions] = useState(() => localStorage.getItem("neto-italic-captions") === "1");
+  const [captionFocusOpen, setCaptionFocusOpen] = useState(false);
+  const [showIdentityCard, setShowIdentityCard] = useState(() => localStorage.getItem("neto-show-identity-card") !== "0");
+  const [captionLines, setCaptionLines] = useState<CaptionLine[]>([]);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [orbEnergy, setOrbEnergy] = useState(0.12);
+  const [manualInstallInfo, setManualInstallInfo] = useState<{ platform: string; steps: string[] } | null>(null);
+  const [nativeActionStatus, setNativeActionStatus] = useState("");
+  const [androidCapabilities, setAndroidCapabilities] = useState<AndroidCapabilities | null>(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [offlineNoticeOpen, setOfflineNoticeOpen] = useState(() => !navigator.onLine);
+  const [permissionPromptOpen, setPermissionPromptOpen] = useState(false);
+  const [permissionMessage, setPermissionMessage] = useState("");
+  const nativeVoiceHandlerRef = useRef<(text: string) => void>(() => {});
+  const failedRequestRef = useRef<{ text: string; attachment: ImageAttachment | null; speakResponse: boolean } | null>(null);
+  const nativeAvailable = typeof window !== "undefined" && !!window.NetoNative;
+
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const isListeningRef = useRef(false);
+  const transcriptRef = useRef("");
+  const requestAbortRef = useRef<AbortController | null>(null);
+  const speakingRef = useRef(false);
+  const ambientRef = useRef<AudioContext | null>(null);
+  const ambientGainRef = useRef<GainNode | null>(null);
+  const liveSessionRef = useRef<any>(null);
+  const liveReadyRef = useRef(false);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraFrameTimerRef = useRef<number | null>(null);
+  const micContextRef = useRef<AudioContext | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const micAnalyserRef = useRef<AnalyserNode | null>(null);
+  const micLevelRafRef = useRef<number | null>(null);
+  const playbackContextRef = useRef<AudioContext | null>(null);
+  const playbackFilterRef = useRef<BiquadFilterNode | null>(null);
+  const playbackCompressorRef = useRef<DynamicsCompressorNode | null>(null);
+  const playbackTimeRef = useRef(0);
+  const playbackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const keepListeningRef = useRef(false);
+  const conversationActiveRef = useRef(false);
+  const intentionalStopRef = useRef(false);
+  const liveOutputTextRef = useRef("");
+  const captionLinesRef = useRef<CaptionLine[]>([]);
+  const captionScrollRef = useRef<HTMLDivElement | null>(null);
+  const captionIdRef = useRef(0);
+
+  const updateLiveCaption = useCallback((speaker: CaptionSpeaker, text: string, options: { final?: boolean; replace?: boolean } = {}) => {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (!clean) return;
+    const current = captionLinesRef.current;
+    const last = current[current.length - 1];
+    let next: CaptionLine[];
+    if (last?.speaker === speaker && !last.final) {
+      if (last.text === clean) {
+        if (options.final && !last.final) {
+          next = [...current.slice(0, -1), { ...last, final: true }];
+          captionLinesRef.current = next;
+          setCaptionLines(next);
+        }
+        setTranscript(clean);
+        return;
+      }
+      const value = options.replace ? clean : (last.text + " " + clean).replace(/\s+/g, " ").trim();
+      next = [...current.slice(0, -1), { ...last, text: value, final: options.final }];
+    } else {
+      next = [...current, { id: ++captionIdRef.current, speaker, text: clean, final: options.final }];
+    }
+    captionLinesRef.current = next;
+    setCaptionLines(next);
+    setTranscript(clean);
+  }, []);
+
+  const finalizeLiveCaption = useCallback((speaker: CaptionSpeaker) => {
+    const current = captionLinesRef.current;
+    const last = current[current.length - 1];
+    if (last?.speaker === speaker && !last.final) {
+      const next = [...current.slice(0, -1), { ...last, final: true }];
+      captionLinesRef.current = next;
+      setCaptionLines(next);
+    }
+  }, []);
+
+  useEffect(() => {
+    const width = window.innerWidth;
+    const isPhone = width < 430 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+    const profile = getAdaptiveProfile(chatHistory, { isPhone, width, isOffline: !navigator.onLine });
+    setAdaptiveMode(profile.mode);
+    setAdaptivePace(profile.pace);
+    setAdaptiveSuggestions(buildAdaptiveSuggestions(chatHistory));
+    setCompactMode(profile.compactUI);
+  }, [chatHistory]);
+
+  useEffect(() => {
+    if (!draftText.trim()) {
+      setIntentHint("");
+      setSelectedIntent(null);
+      return;
+    }
+    const detected = detectUserIntent(draftText);
+    setSelectedIntent(detected.actionLabel);
+    setIntentHint(detected.suggestion);
+  }, [draftText]);
+
+  useEffect(() => {
+    const refresh = () => setAndroidCapabilities(getAndroidCapabilities());
+    refresh();
+    const onNative = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail?.data) return;
+      if (detail.type === "capabilities") { setAndroidCapabilities(detail.data); if (detail.data.microphone) setPermissionPromptOpen(false); return; }
+      if (detail.type === "auth") {
+        if (detail.data.state === "signed_in" && detail.data.idToken) {
+          void signInWithNativeGoogleToken(detail.data.idToken).catch((error: any) => setNativeActionStatus(error?.message || "NETO could not complete sign-in."));
+        } else if (detail.data.state === "error") {
+          setNativeActionStatus(detail.data.message || "Google sign-in failed.");
+        }
+        return;
+      }
+      if (detail.type === "voice") {
+        const data = detail.data;
+        if (data.state === "partial") { transcriptRef.current = data.text || ""; updateLiveCaption("human", data.text || "", { replace: true }); setStatus("listening"); }
+        else if (data.state === "final") { finalizeLiveCaption("human"); nativeVoiceHandlerRef.current(data.text || ""); }
+        else if (data.state === "thinking") setStatus("thinking");
+        else if (data.state === "listening") setStatus("listening");
+        else if (data.state === "level") setOrbEnergy(Math.max(.08, Number(data.value) || .08));
+        else if (data.state === "error") { setTranscript(data.message || "Voice input failed."); setStatus("idle"); }
+      }
+      if (detail.type === "file") { const message = detail.data.state === "selected" ? `Selected ${detail.data.count || 1} file(s)${detail.data.mimeType ? ` (${detail.data.mimeType})` : ""}.` : "File selection cancelled."; setNativeActionStatus(message); setChatHistory(prev => [...prev, { role: "model", parts: [{ text: message }] }]); return; }
+      if (detail.type === "tts") { if (detail.data.state === "speaking") setStatus("speaking"); else if (detail.data.state === "idle" || detail.data.state === "error") setStatus("idle"); }
+    };
+    window.addEventListener("neto-native", onNative);
+    window.addEventListener("focus", refresh);
+    return () => { window.removeEventListener("neto-native", onNative); window.removeEventListener("focus", refresh); };
+  }, [finalizeLiveCaption, updateLiveCaption]);
+
+  useEffect(() => {
+    const updateNetwork = () => {
+      const online = navigator.onLine;
+      setIsOnline(online);
+      setOfflineNoticeOpen(!online);
+      if (online) setTranscript("Back online. You can continue.");
+    };
+    window.addEventListener("online", updateNetwork);
+    window.addEventListener("offline", updateNetwork);
+    return () => { window.removeEventListener("online", updateNetwork); window.removeEventListener("offline", updateNetwork); };
+  }, []);
+
+  // Ask only for the microphone, which is needed for Neto's core voice feature.
+  // Android controls the system dialog; browsers show their own prompt.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const capabilities = getAndroidCapabilities();
+      if (capabilities && !capabilities.microphone) setPermissionPromptOpen(true);
+      else if (!capabilities && navigator.mediaDevices?.getUserMedia) setPermissionPromptOpen(true);
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("neto-ai-mode", aiMode);
+  }, [aiMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("voice-orb-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const updateVoices = () => setVoices(window.speechSynthesis?.getVoices() || []);
+    updateVoices();
+    window.speechSynthesis?.addEventListener("voiceschanged", updateVoices);
+    return () => window.speechSynthesis?.removeEventListener("voiceschanged", updateVoices);
+  }, []);
+
+  useEffect(() => {
+    const standalone = window.matchMedia?.("(display-mode: standalone)").matches || (window.navigator as any).standalone === true;
+    setIsInstalled(standalone);
+    // Chromium browsers (Chrome/Edge/Samsung Internet/Opera, on phone or laptop) fire
+    // "beforeinstallprompt" below and get the automatic Install/Cancel popup.
+    // Safari (iPhone AND Mac) and Firefox never fire that event — Apple and Mozilla don't
+    // implement it, so no code can produce an automatic popup there. We detect those
+    // platforms ourselves and show the correct manual steps instead.
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+    const isSafari = /^((?!chrome|android|crios|fxios|edg\/).)*safari/i.test(ua);
+    const isFirefox = /firefox|fxios/i.test(ua);
+    let manual: { platform: string; steps: string[] } | null = null;
+    if (isIOS && isSafari) manual = { platform: "iPhone / iPad (Safari)", steps: ["Tap the Share icon in Safari's toolbar", 'Scroll down and tap "Add to Home Screen"', 'Tap "Add" to confirm'] };
+    else if (!isIOS && isSafari) manual = { platform: "Mac (Safari)", steps: ["Click the Share icon in Safari's toolbar", 'Choose "Add to Dock"', 'Click "Add" to confirm'] };
+    else if (isFirefox) manual = { platform: "Firefox", steps: ["Open the Firefox menu", 'Look for "Install" or "Add to Home screen" (only on Firefox versions that support it)'] };
+    setManualInstallInfo(!standalone ? manual : null);
+    if (manual && !standalone && !installDismissed) openPanel(setInstallOpen);
+    const onBeforeInstall = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+      if (!standalone) openPanel(setInstallOpen);
+    };
+    const onInstalled = () => { setIsInstalled(true); setInstallPrompt(null); setInstallOpen(false); };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall as EventListener);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall as EventListener);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, [installDismissed]);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => undefined);
+    }
+
+    // Render free services can sleep. Warm the backend silently after the
+    // cached UI is already visible so users never see a Render wake-up page.
+    if (navigator.onLine) {
+      const timer = window.setTimeout(() => {
+        fetch("/api/health", { cache: "no-store", credentials: "same-origin", keepalive: true }).catch(() => undefined);
+      }, 1200);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, []);
+
+  const wakeLockRef = useRef<any>(null);
+
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch (err: any) {
+        if (err.name !== 'NotAllowedError' && !err.message?.includes('permissions policy')) {
+          console.error("Wake Lock error:", err);
+        }
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") requestWakeLock();
+    };
+
+    requestWakeLock();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopAmbient = useCallback(() => {
+    try { ambientGainRef.current?.gain.exponentialRampToValueAtTime(0.0001, (ambientRef.current?.currentTime || 0) + 0.15); } catch {}
+    setTimeout(() => { try { ambientRef.current?.close(); } catch {} ambientRef.current = null; ambientGainRef.current = null; }, 250);
+  }, []);
+
+
+
+  const decodeBase64 = useCallback((base64: string) => {
+    const binary = atob(base64); const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }, []);
+
+  const playLivePcm = useCallback((base64: string) => {
+    if (isMuted) return;
+    const bytes = decodeBase64(base64);
+    if (bytes.byteLength < 2) return;
+    const ctx = playbackContextRef.current || new AudioContext();
+    playbackContextRef.current = ctx;
+    void ctx.resume();
+    // Live providers send signed 16-bit PCM. Ignore a trailing odd byte rather
+    // than letting a malformed chunk turn into a loud click or warped tone.
+    const sampleBytes = bytes.byteLength - (bytes.byteLength % 2);
+    const samples = new Int16Array(bytes.buffer, bytes.byteOffset, sampleBytes / 2);
+    let peak = 0; for (let i = 0; i < samples.length; i += Math.max(1, Math.floor(samples.length / 160))) peak = Math.max(peak, Math.abs(samples[i]) / 32768);
+    setOrbEnergy(Math.min(1, Math.max(0.12, peak * 2.4)));
+    const buffer = ctx.createBuffer(1, samples.length, 24000);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    // Remove sub-bass rumble and soften sudden PCM peaks that can sound like a
+    // horn or a stretched syllable on phone speakers.
+    if (!playbackFilterRef.current || !playbackCompressorRef.current) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.value = 110;
+      filter.Q.value = 0.7;
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -18;
+      compressor.knee.value = 18;
+      compressor.ratio.value = 3;
+      compressor.attack.value = 0.004;
+      compressor.release.value = 0.12;
+      filter.connect(compressor).connect(ctx.destination);
+      playbackFilterRef.current = filter;
+      playbackCompressorRef.current = compressor;
+    }
+    source.connect(playbackFilterRef.current);
+    playbackSourcesRef.current.add(source);
+    const start = Math.max(ctx.currentTime + 0.01, playbackTimeRef.current || 0);
+    source.start(start); playbackTimeRef.current = start + buffer.duration;
+    source.onended = () => {
+      playbackSourcesRef.current.delete(source);
+      if (ctx.currentTime >= playbackTimeRef.current - 0.03 && playbackSourcesRef.current.size === 0) { speakingRef.current = false; setStatus("idle"); stopAmbient(); }
+    };
+    // Do not mix the optional ambient oscillator into AI playback. On small
+    // speakers it can sound like a horn or a stretched syllable.
+    stopAmbient();
+    speakingRef.current = true; setStatus("speaking");
+  }, [decodeBase64, isMuted, stopAmbient]);
+
+  const disconnectLive = useCallback(() => {
+    keepListeningRef.current = false;
+    intentionalStopRef.current = true;
+    liveReadyRef.current = false;
+    try { liveSessionRef.current?.close(); } catch {}
+    liveSessionRef.current = null;
+    try { micProcessorRef.current?.disconnect(); } catch {}
+    try { micSourceRef.current?.disconnect(); } catch {}
+    try { if (micLevelRafRef.current) cancelAnimationFrame(micLevelRafRef.current); } catch {}
+    try { micAnalyserRef.current?.disconnect(); } catch {}
+    try { micContextRef.current?.close(); } catch {}
+    try { micStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    try { cameraStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    if (cameraFrameTimerRef.current) window.clearInterval(cameraFrameTimerRef.current);
+    cameraFrameTimerRef.current = null; cameraStreamRef.current = null;
+    if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+    for (const source of playbackSourcesRef.current) { try { source.stop(); } catch {} }
+    playbackSourcesRef.current.clear();
+    playbackTimeRef.current = 0;
+    micProcessorRef.current = null; micSourceRef.current = null; micAnalyserRef.current = null; micContextRef.current = null; micStreamRef.current = null; setOrbEnergy(0.12);
+    setLiveConnected(false); setVideoConversationActive(false); isListeningRef.current = false; speakingRef.current = false; stopAmbient();
+  }, [stopAmbient]);
+
+  const startLiveVoice = useCallback(async (withVideo = false) => {
+    if (isMicMuted || (!withVideo && !voiceMode) || liveSessionRef.current) return;
+    keepListeningRef.current = true;
+    intentionalStopRef.current = false;
+    liveReadyRef.current = false;
+    liveOutputTextRef.current = "";
+    try {
+      if (!window.isSecureContext) throw new Error("Voice requires a secure HTTPS connection.");
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone access is not supported here.");
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        ...(withVideo ? { video: { facingMode: cameraFacing, width: { ideal: 640, max: 960 }, height: { ideal: 360, max: 540 }, frameRate: { ideal: 1, max: 2 } } } : {}),
+      });
+      micStreamRef.current = stream;
+
+      if (withVideo) {
+        if (!stream.getVideoTracks()[0]) throw new Error("Camera access was not available.");
+        cameraStreamRef.current = stream;
+        if (cameraVideoRef.current) { cameraVideoRef.current.srcObject = stream; await cameraVideoRef.current.play().catch(() => {}); }
+        setVideoConversationActive(true);
+      }
+
+      const ctx = new AudioContext({ latencyHint: "interactive" });
+      micContextRef.current = ctx;
+      await ctx.resume();
+      const source = ctx.createMediaStreamSource(stream);
+      micSourceRef.current = source;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      micAnalyserRef.current = analyser;
+      source.connect(analyser);
+
+      const levelData = new Uint8Array(analyser.frequencyBinCount);
+      const sampleMicLevel = () => {
+        analyser.getByteTimeDomainData(levelData);
+        let sum = 0;
+        for (const value of levelData) { const n = (value - 128) / 128; sum += n * n; }
+        setOrbEnergy(Math.min(1, Math.max(0.08, Math.sqrt(sum / levelData.length) * 3.5)));
+        micLevelRafRef.current = requestAnimationFrame(sampleMicLevel);
+      };
+      micLevelRafRef.current = requestAnimationFrame(sampleMicLevel);
+
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${wsProtocol}//${window.location.host}/live?mode=${encodeURIComponent(withVideo ? "normal" : aiMode)}${withVideo ? "&video=1" : ""}`);
+      liveSessionRef.current = ws;
+
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      micProcessorRef.current = processor;
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(ctx.destination);
+
+      processor.onaudioprocess = (event) => {
+        if (!liveReadyRef.current || !liveSessionRef.current || isMicMuted || liveSessionRef.current.readyState !== WebSocket.OPEN) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const ratio = ctx.sampleRate / 16000;
+        const length = Math.floor(input.length / ratio);
+        const pcm = new Int16Array(length);
+        for (let i = 0; i < length; i++) {
+          const sample = input[Math.min(input.length - 1, Math.floor(i * ratio))];
+          pcm[i] = Math.max(-1, Math.min(1, sample)) * 32767;
+        }
+        let binary = "";
+        const bytes = new Uint8Array(pcm.buffer);
+        const step = 0x8000;
+        for (let i = 0; i < bytes.length; i += step) binary += String.fromCharCode(...bytes.subarray(i, i + step));
+        try { liveSessionRef.current.send(JSON.stringify({ audio: btoa(binary) })); } catch {}
+      };
+
+      ws.onopen = () => {
+        setLiveConnected(true);
+        setStatus("thinking");
+      };
+
+      const markLiveReady = () => {
+        liveReadyRef.current = true;
+        setStatus("listening");
+        isListeningRef.current = true;
+        if (withVideo) {
+          const canvas = cameraCanvasRef.current || document.createElement("canvas"); cameraCanvasRef.current = canvas;
+          const sendFrame = () => {
+            if (ws.readyState !== WebSocket.OPEN || !cameraVideoRef.current || cameraVideoRef.current.readyState < 2) return;
+            const width = 480; const height = Math.max(1, Math.round(width * (cameraVideoRef.current.videoHeight || 360) / (cameraVideoRef.current.videoWidth || 640)));
+            canvas.width = width; canvas.height = height; const context = canvas.getContext("2d"); if (!context) return;
+            context.drawImage(cameraVideoRef.current, 0, 0, width, height);
+            try { ws.send(JSON.stringify({ video: canvas.toDataURL("image/jpeg", 0.52).split(",")[1] })); } catch {}
+          };
+          sendFrame(); cameraFrameTimerRef.current = window.setInterval(sendFrame, 1000);
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.ready) { markLiveReady(); return; }
+          if (msg.audio) playLivePcm(msg.audio);
+          if (msg.error) { setTranscript(msg.error); disconnectLive(); setStatus("idle"); return; }
+          if (msg.listening) setStatus("listening");
+          if (msg.thinking) setStatus("thinking");
+          if (msg.interrupted) {
+            for (const source of playbackSourcesRef.current) { try { source.stop(); } catch {} }
+            playbackSourcesRef.current.clear();
+            playbackTimeRef.current = 0;
+            speakingRef.current = false;
+            liveOutputTextRef.current = "";
+            setStatus("listening");
+            return;
+          }
+          if (msg.inputTranscription) {
+            setTranscript(msg.inputTranscription);
+            transcriptRef.current = msg.inputTranscription;
+            updateLiveCaption("human", msg.inputTranscription, { replace: !msg.inputTranscriptionDelta, final: msg.inputTranscriptionFinal });
+            if (msg.inputTranscriptionFinal) finalizeLiveCaption("human");
+          }
+          if (msg.outputTranscription) {
+            liveOutputTextRef.current = msg.outputTranscriptionDelta ? liveOutputTextRef.current + msg.outputTranscription : msg.outputTranscription;
+            updateLiveCaption("ai", msg.outputTranscription, { replace: !msg.outputTranscriptionDelta, final: msg.outputTranscriptionFinal });
+            if (msg.outputTranscriptionFinal) finalizeLiveCaption("ai");
+          }
+          if (msg.turnComplete) {
+            const reply = liveOutputTextRef.current.trim();
+            if (reply) setChatHistory(prev => [...prev, { role: "model", parts: [{ text: reply }] }]);
+            liveOutputTextRef.current = "";
+            isListeningRef.current = true;
+            setStatus("listening");
+          }
+        } catch {}
+      };
+
+      ws.onerror = () => {
+        if (!intentionalStopRef.current) {
+          // Stop retrying a broken live session; the next tap uses standard voice.
+          intentionalStopRef.current = true;
+          keepListeningRef.current = false;
+          if (!withVideo) setVoiceMode(false);
+          setTranscript("Live voice is unavailable. Tap the orb again to use standard voice.");
+          disconnectLive();
+          setStatus("idle");
+        }
+      };
+      ws.onclose = () => {
+        const shouldReconnect = !withVideo && !intentionalStopRef.current && keepListeningRef.current && !isMicMuted && voiceMode;
+        setLiveConnected(false);
+        liveReadyRef.current = false;
+        isListeningRef.current = false;
+        liveSessionRef.current = null;
+        try { micProcessorRef.current?.disconnect(); } catch {}
+        try { micSourceRef.current?.disconnect(); } catch {}
+        try { if (micLevelRafRef.current) cancelAnimationFrame(micLevelRafRef.current); } catch {}
+        try { micAnalyserRef.current?.disconnect(); } catch {}
+        try { micContextRef.current?.close(); } catch {}
+        try { micStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+        if (cameraFrameTimerRef.current) window.clearInterval(cameraFrameTimerRef.current);
+        cameraFrameTimerRef.current = null; cameraStreamRef.current = null;
+        if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+        setVideoConversationActive(false);
+        micProcessorRef.current = null; micSourceRef.current = null; micAnalyserRef.current = null; micContextRef.current = null; micStreamRef.current = null;
+        if (shouldReconnect) {
+          setStatus("thinking");
+          window.setTimeout(() => { if (keepListeningRef.current && !isMicMuted && voiceMode && !liveSessionRef.current) void startLiveVoice(); }, 350);
+        } else { setStatus("idle"); stopAmbient(); }
+        intentionalStopRef.current = false;
+      };
+    } catch (error: any) {
+      console.error(error);
+      disconnectLive();
+      // Android WebView supports getUserMedia only when its permission callback succeeds.
+      // Use Android's supported recognizer when that browser path is unavailable.
+      if (window.NetoNative?.startVoice) {
+        try {
+          const result = JSON.parse(window.NetoNative.startVoice(language));
+          if (result?.ok) { setStatus("listening"); return; }
+          setTranscript(result?.message || "Voice is unavailable right now.");
+        } catch { setTranscript("Voice is unavailable right now."); }
+      } else setTranscript(error?.name === "NotAllowedError" ? "Microphone access was denied. Enable it in browser or Android settings." : (error?.message || "Voice is unavailable right now."));
+      setStatus("idle");
+    }
+  }, [aiMode, cameraFacing, disconnectLive, finalizeLiveCaption, isMicMuted, language, playLivePcm, stopAmbient, updateLiveCaption, voiceMode]);
+
+
+  const switchCamera = useCallback(async () => {
+    if (!videoConversationActive || !micStreamRef.current || !navigator.mediaDevices?.getUserMedia) return;
+    const nextFacing = cameraFacing === "user" ? "environment" : "user";
+    try {
+      const nextStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: nextFacing, width: { ideal: 640, max: 960 }, height: { ideal: 360, max: 540 }, frameRate: { ideal: 1, max: 2 } } });
+      const nextTrack = nextStream.getVideoTracks()[0];
+      const currentTrack = micStreamRef.current.getVideoTracks()[0];
+      if (!nextTrack) throw new Error("Camera switch was not available.");
+      if (currentTrack) { micStreamRef.current.removeTrack(currentTrack); currentTrack.stop(); }
+      micStreamRef.current.addTrack(nextTrack);
+      if (cameraVideoRef.current) { cameraVideoRef.current.srcObject = micStreamRef.current; await cameraVideoRef.current.play().catch(() => {}); }
+      setCameraFacing(nextFacing);
+    } catch { setTranscript("Could not switch camera. Check camera permissions and try again."); }
+  }, [cameraFacing, videoConversationActive]);
+
+  useEffect(() => {
+    if (!videoConversationActive || !cameraVideoRef.current || !micStreamRef.current) return;
+    const video = cameraVideoRef.current;
+    video.srcObject = micStreamRef.current;
+    void video.play().catch(() => setTranscript("Camera preview could not start. Check browser camera permissions."));
+  }, [videoConversationActive]);
+
+  const startVideoConversation = useCallback(() => {
+    if (aiMode !== "normal") { setTranscript("Video Conversation uses Gemini Live. Switch AI mode to Normal first."); return; }
+    conversationActiveRef.current = true; void startLiveVoice(true);
+  }, [aiMode, startLiveVoice]);
+
+  const exportConversation = useCallback((format: 'txt' | 'json') => {
+    if (chatHistory.length === 0) return;
+
+    let content = "";
+    let mimeType = "";
+    let extension = "";
+
+    if (format === 'txt') {
+      content = chatHistory.map(m => `${m.role === 'user' ? 'You' : 'Neto'}:\n${m.parts[0].text}`).join('\n\n');
+      mimeType = 'text/plain';
+      extension = 'txt';
+    } else {
+      content = JSON.stringify(chatHistory, null, 2);
+      mimeType = 'application/json';
+      extension = 'json';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `neto_conversation_${new Date().toISOString().split('T')[0]}.${extension}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [chatHistory]);
+
+  const endAndSaveConversation = async () => {
+    stopEverything();
+    setDraftText("");
+    setTranscript("");
+    transcriptRef.current = "";
+    setEndConfirmOpen(false);
+    if (chatHistory.length > 0 && currentUser) {
+      await saveConversation(chatHistory);
+    }
+  };
+
+  const stopEverything = useCallback(() => {
+    conversationActiveRef.current = false;
+    isListeningRef.current = false;
+    try { recognitionRef.current?.abort(); } catch {}
+    requestAbortRef.current?.abort(); requestAbortRef.current = null;
+    window.speechSynthesis?.cancel();
+    try { window.NetoNative?.stopVoice?.(); window.NetoNative?.stopSpeaking?.(); } catch {}
+
+    disconnectLive();
+    playbackTimeRef.current = 0;
+    speakingRef.current = false;
+    stopAmbient();
+    setStatus("idle");
+  }, [disconnectLive, stopAmbient]);
+
+  const pickVoice = useCallback(() => {
+    if (!voices.length) return null;
+    const patterns: Record<string, RegExp> = {
+      Sky: /Samantha|Google US English|Aria|Jenny|Microsoft.*Online.*Natural/i,
+      Cove: /Daniel|Google UK|George|Microsoft.*Male/i,
+      Breeze: /Ava|Natural|Breeze|Guy|Microsoft.*Natural/i,
+    };
+    return voices.find(v => patterns[voice]?.test(v.name)) || voices.find(v => v.lang?.toLowerCase().startsWith("en")) || voices[0];
+  }, [voices, voice]);
+
+  const speakSentence = useCallback((text: string): Promise<void> => new Promise(resolve => {
+    if (isMuted || !text.trim()) { resolve(); return; }
+    // Android WebView does not guarantee browser speech synthesis. Prefer its native TTS
+    // when available while keeping the PWA browser implementation unchanged.
+    if (window.NetoNative?.speak) {
+      try {
+        const nativeResult = JSON.parse(window.NetoNative.speak(text, speed));
+        if (nativeResult?.ok) { speakingRef.current = true; setStatus("speaking"); resolve(); return; }
+      } catch { /* fall through to browser TTS */ }
+    }
+    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") { setTranscript("Spoken replies are not supported in this browser."); resolve(); return; }
+    const utterance = new SpeechSynthesisUtterance(text.trim());
+    utterance.rate = speed; utterance.pitch = 1;
+    const selected = pickVoice(); if (selected) utterance.voice = selected;
+    speakingRef.current = true;
+    utterance.onstart = () => { stopAmbient(); setStatus("speaking"); };
+    utterance.onend = () => { speakingRef.current = false; stopAmbient(); resolve(); };
+    utterance.onerror = () => { speakingRef.current = false; stopAmbient(); resolve(); };
+    window.speechSynthesis?.speak(utterance);
+  }), [isMuted, speed, pickVoice, stopAmbient]);
+
+  const handleMessage = useCallback(async (text: string, attachment?: ImageAttachment | null, speakResponse = false, toolResults?: { name: string; result: unknown }[]) => {
+    if (!text.trim() && !toolResults?.length) return;
+
+    // Handle clear device commands locally so browser/search/call actions do not
+    // depend on the model emitting a streamed tool call first.
+    const localCommand = !toolResults?.length && window.NetoNative ? parseAndroidCommand(text) : null;
+    if (localCommand) {
+      setChatHistory(prev => [...prev, { role: "user", parts: [{ text }] }]);
+      const result = executeAndroidCommand(localCommand);
+      const message = result?.message || "NETO could not complete that Android action.";
+      setNativeActionStatus(message);
+      setChatHistory(prev => [...prev, { role: "model", parts: [{ text: message }] }]);
+      if (speakResponse) void speakSentence(message);
+      return;
+    }
+
+    if (!navigator.onLine) {
+      failedRequestRef.current = { text, attachment: attachment || null, speakResponse };
+      setOfflineNoticeOpen(true);
+      setTranscript("Oops, you're offline. Please check your internet connection and try again.");
+      return;
+    }
+
+    // Do not call stopEverything() here. We want text and voice to "branch"
+    // and run in parallel without "pollution collision"
+    setStatus("thinking");
+
+    if (!toolResults?.length) setChatHistory(prev => [...prev, { role: "user", parts: [{ text: attachment ? `${text || "Image attached"} [${attachment.name}]` : text }] }]);
+
+    const controller = new AbortController(); requestAbortRef.current = controller;
+    const requestTimeout = window.setTimeout(() => controller.abort(), 45_000);
+    const clientContext = {
+      creator: CREATOR,
+      app: "Neto",
+      installed: isInstalled,
+      canOfferInstallPrompt: !!installPrompt,
+      platform: navigator.platform,
+      nativeCapabilities: !!window.NetoNative,
+      theme,
+      mode: aiMode,
+      toolResultFollowUp: !!toolResults?.length,
+    };
+    try {
+      const response = await fetch("/api/chat-stream", {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({
+          message: text,
+          history: chatHistory.slice(-20),
+          attachment: attachment ? {
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            url: attachment.url,
+            storagePath: attachment.storagePath,
+            size: attachment.size,
+            text: attachment.text || null,
+          } : null,
+          clientContext,
+          toolResults: toolResults || [],
+          mode: aiMode,
+        }),
+      });
+      if (!response.ok) {
+        let serverMessage = "";
+        try { const body = await response.json(); serverMessage = body?.error || ""; } catch {}
+        throw new Error(serverMessage || `Request failed (${response.status})`);
+      }
+      const reader = response.body?.getReader(); const decoder = new TextDecoder();
+      let fullResponse = "";
+      let pendingToolCall: { name: string; arguments: any; id?: string } | null = null;
+
+      if (reader) {
+        let buffer = "";
+        const toolMarker = "__NETO_TOOL_CALL__:";
+        const appendText = (text: string) => {
+          if (!text) return;
+          fullResponse += text;
+          updateLiveCaption("ai", text);
+          setChatHistory(prev => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "model") return [...prev.slice(0, -1), { ...last, parts: [{ text: fullResponse }] }];
+            return [...prev, { role: "model", parts: [{ text: fullResponse }] }];
+          });
+        };
+        const consume = (flush = false) => {
+          while (buffer) {
+            const markerIndex = buffer.indexOf(toolMarker);
+            if (markerIndex === -1) {
+              const keep = flush ? 0 : Math.min(toolMarker.length - 1, buffer.length);
+              appendText(buffer.slice(0, buffer.length - keep));
+              buffer = keep ? buffer.slice(-keep) : "";
+              return;
+            }
+            appendText(buffer.slice(0, markerIndex));
+            buffer = buffer.slice(markerIndex + toolMarker.length);
+            const newlineIndex = buffer.indexOf("\n");
+            if (newlineIndex === -1) return;
+            const jsonStr = buffer.slice(0, newlineIndex);
+            buffer = buffer.slice(newlineIndex + 1);
+            try { pendingToolCall = JSON.parse(jsonStr); } catch { appendText(toolMarker + jsonStr + "\n"); }
+          }
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          consume();
+        }
+        buffer += decoder.decode();
+        consume(true);
+      }
+
+      if (pendingToolCall) {
+        setStatus("thinking");
+        setNativeActionStatus(`Executing ${pendingToolCall.name}...`);
+
+
+        const action = isAndroidAction(pendingToolCall.name) ? pendingToolCall.name : undefined;
+        if (action) {
+          const result = executeAndroidCommand({
+            type: "android_action",
+            action,
+            ...pendingToolCall.arguments
+          });
+
+          const resultMessage = result?.message || "Tool execution failed.";
+          setNativeActionStatus(resultMessage);
+
+          void handleMessage("", null, speakResponse, [{ name: pendingToolCall.name, result }]);
+        } else {
+          setNativeActionStatus(`Unknown tool: ${pendingToolCall.name}`);
+          setStatus("idle");
+        }
+      } else {
+        if (fullResponse.trim() && (voiceMode || speakResponse)) void speakSentence(fullResponse);
+        setStatus("idle");
+      }
+    } catch (error: any) {
+      if (error?.name !== "AbortError") {
+        if (error instanceof TypeError) {
+          failedRequestRef.current = { text, attachment: attachment || null, speakResponse };
+          setOfflineNoticeOpen(true);
+          setTranscript("Oops, your connection was lost. Please check your internet connection and try again.");
+        } else {
+          const errorMessage = error?.message || "NETO is having trouble connecting to the server.";
+          setChatHistory(prev => [...prev, { role: "model", parts: [{ text: `[Error: ${errorMessage}]` }] }]);
+        }
+      } else {
+        setTranscript("The request took too long. Please try again.");
+      }
+      setStatus("idle");
+    } finally { window.clearTimeout(requestTimeout); requestAbortRef.current = null; }
+  }, [aiMode, chatHistory, isInstalled, installPrompt, speakSentence, theme, updateLiveCaption, voiceMode]);
+
+  useEffect(() => { nativeVoiceHandlerRef.current = (text: string) => { if (text.trim()) void handleMessage(text, null, true); }; }, [handleMessage]);
+
+  const startListening = useCallback(async () => {
+    if (isMicMuted) return;
+    conversationActiveRef.current = true;
+    if (voiceMode) { await startLiveVoice(); return; }
+    if (window.NetoNative?.startVoice) {
+      try {
+        const result = JSON.parse(window.NetoNative.startVoice(language));
+        if (result?.ok) { transcriptRef.current = ""; setTranscript(""); setStatus("listening");  return; }
+        conversationActiveRef.current = false;
+        setTranscript(result?.message || "Voice is unavailable right now."); setStatus("idle"); return;
+      } catch { conversationActiveRef.current = false; setTranscript("Android voice could not start."); setStatus("idle"); return; }
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) { conversationActiveRef.current = false; setTranscript("Voice input is not supported in this browser."); setStatus("idle"); return; }
+    try {
+      const permissionStream = await navigator.mediaDevices?.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      permissionStream?.getTracks().forEach(track => track.stop());
+    } catch { setIsMicMuted(true); setTranscript("Microphone permission is required."); setStatus("idle"); return; }
+    try { recognitionRef.current?.abort(); } catch {}
+    intentionalStopRef.current = false;
+    keepListeningRef.current = true;
+    const recognition = new SpeechRecognition(); recognitionRef.current = recognition;
+    // continuous:true + auto-restart below keeps the mic "awake" through natural pauses,
+    // instead of the browser closing the session after the first thing the user says.
+    recognition.continuous = true; recognition.interimResults = true; recognition.maxAlternatives = 1; recognition.lang = language;
+    isListeningRef.current = true; transcriptRef.current = ""; setTranscript(""); setStatus("listening");
+    recognition.onstart = () => { isListeningRef.current = true; setStatus("listening"); };
+    recognition.onresult = (event: any) => {
+      let text = "";
+      for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript + " ";
+      transcriptRef.current = text.trim(); updateLiveCaption("human", text.trim(), { replace: true });
+    };
+    recognition.onerror = (event: any) => {
+      isListeningRef.current = false; stopAmbient();
+      if (["not-allowed", "service-not-allowed"].includes(event.error)) {
+        intentionalStopRef.current = true; keepListeningRef.current = false; conversationActiveRef.current = false;
+        setIsMicMuted(true); setTranscript("Microphone access was denied."); setStatus("idle");
+      }
+      // Other errors (e.g. "no-speech", "network", "aborted") are handled by onend, which
+      // decides whether to auto-restart — the browser fires onend right after onerror.
+    };
+    recognition.onend = () => {
+      isListeningRef.current = false; stopAmbient();
+      const text = transcriptRef.current.trim(); transcriptRef.current = "";
+      if (text) {
+        setTranscript(""); void handleMessage(text);
+      } else if (keepListeningRef.current && !intentionalStopRef.current && !isMicMuted) {
+        // The browser ended the session on its own (silence timeout) — restart so the
+        // orb stays listening until the user actually mutes it.
+        try { recognition.start(); } catch { setStatus("idle"); }
+      } else {
+        setStatus("idle");
+      }
+    };
+    try { recognition.start(); } catch { setStatus("idle"); }
+  }, [handleMessage, isMicMuted, stopAmbient, startLiveVoice, updateLiveCaption, voiceMode, language]);
+
+  useEffect(() => {
+    if (!conversationActiveRef.current || status !== "idle" || isMicMuted) return;
+    const timer = window.setTimeout(() => {
+      if (conversationActiveRef.current && !isMicMuted && !isListeningRef.current && !liveSessionRef.current) void startListening();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [isMicMuted, startListening, status]);
+
+  const handleOrbTap = useCallback(() => {
+    setHasStarted(true);
+    if (status === "listening" || isListeningRef.current) {
+      const text = transcriptRef.current.trim(); stopEverything(); if (text) void handleMessage(text); setTranscript(""); transcriptRef.current = "";
+    } else if (status === "speaking" || status === "thinking") { intentionalStopRef.current = true; keepListeningRef.current = false; stopEverything(); }
+    else void startListening();
+  }, [status, stopEverything, handleMessage, startListening]);
+
+  const refreshAndroidCapabilities = useCallback(() => setAndroidCapabilities(getAndroidCapabilities()), []);
+
+  const signIn = useCallback(async () => {
+    if (window.NetoNative?.signInWithGoogle) {
+      try {
+        const result = JSON.parse(window.NetoNative.signInWithGoogle());
+        setNativeActionStatus(result?.message || "Opening secure Google sign-in…");
+      } catch { setNativeActionStatus("Google sign-in could not start."); }
+      return;
+    }
+    try { await signInWithGoogle(); }
+    catch (error: any) { setNativeActionStatus(error?.message || "Google sign-in failed. Please try again."); }
+  }, []);
+
+  const runNativeAction = useCallback((action: NativeAction, payload: Record<string, string> = {}) => {
+    if (!window.NetoNative) { setNativeActionStatus("Android control is available in the NETO Android app only."); return; }
+    const consequential = action === "make_call" || action === "compose_sms";
+    if (consequential && !window.confirm("NETO will open Android’s confirmation screen. Continue?")) return;
+    const command: AndroidCommand = { type: "android_action", action, ...payload } as AndroidCommand;
+    const result = executeAndroidCommand(command);
+    setNativeActionStatus(result?.message || "NETO could not complete that device action.");
+    window.setTimeout(refreshAndroidCapabilities, 250);
+  }, [refreshAndroidCapabilities]);
+
+  const requestMicrophonePermission = useCallback(async () => {
+    setPermissionMessage("");
+    if (window.NetoNative) {
+      runNativeAction("request_capability", { target: "microphone" });
+      setPermissionMessage("Use the Android permission prompt to allow Microphone.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setPermissionPromptOpen(false);
+    } catch {
+      setPermissionMessage("Microphone access is blocked. Open your browser or app settings and allow it to use voice.");
+    }
+  }, [runNativeAction]);
+
+  const copyLastResponse = useCallback(async () => {
+    const message = [...chatHistory].reverse().find(item => item.role === "model")?.parts[0]?.text;
+    if (!message) return;
+    try { await navigator.clipboard.writeText(message); setTranscript("Response copied."); } catch { setTranscript("Copy is not available in this browser."); }
+  }, [chatHistory]);
+
+  const regenerateLastResponse = useCallback(() => {
+    const previous = [...chatHistory].reverse().find(item => item.role === "user")?.parts[0]?.text;
+    if (previous) void handleMessage(previous);
+  }, [chatHistory, handleMessage]);
+
+
+  const toggleMic = useCallback(() => {
+    setIsMicMuted(prev => {
+      const next = !prev;
+      if (next) { conversationActiveRef.current = false; intentionalStopRef.current = true; keepListeningRef.current = false; try { recognitionRef.current?.abort(); } catch {}  disconnectLive(); isListeningRef.current = false; stopAmbient(); if (status === "listening") setStatus("idle"); }
+      return next;
+    });
+  }, [disconnectLive, status, stopAmbient]);
+
+  const shareImageWithLive = useCallback(async (attachment: ImageAttachment) => {
+    const socket = liveSessionRef.current;
+    if (aiMode !== "normal") return false;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !attachment.mimeType.startsWith("image/")) return false;
+    try {
+      const response = await fetch(attachment.url);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      socket.send(JSON.stringify({ video: btoa(binary) }));
+      return true;
+    } catch { return false; }
+  }, [aiMode]);
+
+  const submitText = useCallback(() => {
+    const text = draftText.trim();
+    if (text || imageAttachment) {
+      const attachment = imageAttachment;
+      const intent = detectUserIntent(text || "");
+      setDraftText("");
+      setImageAttachment(null);
+      setIntentHint(intent.suggestion);
+      if (shouldUseWebSearch(text)) {
+        setTranscript("Checking the latest web sources…");
+      }
+      if (intent.category === "device" && !text.toLowerCase().includes("call") && !text.toLowerCase().includes("text")) {
+        setNativeActionStatus("Intent detected: phone workflow ready. I’m preparing the right device action.");
+      }
+      void handleMessage(text || (attachment?.mimeType.startsWith("image/") ? "Please analyze this image." : `Please analyze this file: ${attachment?.name || "attachment"}.`), attachment);
+    }
+  }, [draftText, imageAttachment, handleMessage]);
+
+  const installApp = useCallback(async () => {
+    if (installPrompt) {
+      const result = await installPrompt.prompt();
+      if (result?.outcome === "accepted") setIsInstalled(true);
+      setInstallPrompt(null); setInstallOpen(false); return;
+    }
+    setInstallOpen(false);
+  }, [installPrompt]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setMenuOpen(false); setSettingsOpen(false); setHistoryOpen(false); setDeviceOpen(false); setAboutOpen(false); setInstallOpen(false); } if (e.key === "Enter" && e.ctrlKey) submitText(); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [submitText]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setMenuOpen(false); setSettingsOpen(false); setHistoryOpen(false); setDeviceOpen(false); setAboutOpen(false); setInstallOpen(false); setClearHistoryConfirmOpen(false); setEndConfirmOpen(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => () => stopEverything(), [stopEverything]);
+
+  const closePanel = useCallback((setter: (value: boolean) => void) => {
+    setter(false);
+    if (window.history.state?.netoPanel) window.history.back();
+  }, []);
+
+  const openPanel = useCallback((setter: (value: boolean) => void) => {
+    window.history.pushState({ netoPanel: true }, "");
+    setter(true);
+  }, []);
+
+  useEffect(() => {
+    const container = captionScrollRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  }, [captionFocusOpen, captionLines]);
+
+  const statusText = status === "listening" ? "You are speaking..." : status === "thinking" ? "Neto is thinking..." : status === "speaking" ? "Neto is speaking..." : "";
+  const themeData = THEMES.find(t => t.id === theme)!;
+
+  return (
+    <div className={`neto-shell relative w-full min-h-[100dvh] overflow-hidden select-none ${captionFocusOpen ? "caption-focus-open" : ""}`} style={{ background: "var(--bg)", color: "var(--text)" }}>
+      <style>{`
+        @keyframes breatheIdle {0%,100%{transform:scale(1)}50%{transform:scale(1.025)}}
+        @keyframes breatheListening {0%,100%{transform:scale(1.035)}50%{transform:scale(1.105)}}
+        @keyframes breatheThinking {0%,100%{transform:scale(1.02) rotate(-1deg)}50%{transform:scale(1.07) rotate(1deg)}}
+        @keyframes breatheSpeaking {0%,100%{transform:scale(1.015)}18%{transform:scale(1.085)}35%{transform:scale(1.035)}54%{transform:scale(1.10)}76%{transform:scale(1.05)}}
+        @keyframes pulseRing {0%{transform:scale(.88);opacity:.55}100%{transform:scale(1.55);opacity:0}}
+        @keyframes cloudDrift {0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(8px,-6px) scale(1.07)}}
+        @keyframes cloudDrift2 {0%,100%{transform:translate(0,0) rotate(0)}50%{transform:translate(-10px,5px) rotate(4deg)}}
+        @keyframes shimmer {0%,100%{transform:translateX(-8%) rotate(-2deg);opacity:.42}50%{transform:translateX(10%) rotate(3deg);opacity:.78}}
+        @keyframes speakingWave {0%,100%{transform:scale(.95);opacity:.16}50%{transform:scale(1.28);opacity:.38}}
+      `}</style>
+
+      <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 sm:px-8 pt-[max(16px,env(safe-area-inset-top))] pb-4 select-none pointer-events-auto">
+        <button aria-label="Open menu" onClick={() => openPanel(setMenuOpen)} className="w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shadow-sm border active:scale-95 transition-transform" style={{ background:"var(--surface-solid)", borderColor:"var(--border)" }}><Menu className="w-5 h-5" /></button>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button aria-label={isMuted ? "Unmute AI voice" : "Mute AI voice"} onClick={() => { setIsMuted(v => !v); if (!isMuted) window.speechSynthesis?.cancel(); }} className="w-11 h-11 sm:w-12 sm:h-12 rounded-full shadow-sm flex items-center justify-center border active:scale-95 transition-transform" style={{ background:isMuted?"rgba(239,68,68,.12)":"var(--surface-solid)", borderColor:"var(--border)" }}>{isMuted?<VolumeX className="w-5 h-5 text-red-500"/>:<Volume2 className="w-5 h-5"/>}</button>
+          <button aria-label={captionFocusOpen ? "Exit focused captions" : "Open focused captions"} onClick={() => { if (!captionsEnabled) setCaptionsEnabled(true); setCaptionFocusOpen(v => captionsEnabled ? !v : true); }} className="w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shadow-sm border active:scale-95 transition-transform" style={{ background:captionsEnabled?"var(--accent-soft)":"var(--surface-solid)", borderColor:"var(--border)" }}><span className="text-xs font-semibold">CC</span></button>
+          <button aria-label="Open settings" onClick={() => openPanel(setSettingsOpen)} className="w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shadow-sm border active:scale-95 transition-transform" style={{ background:"var(--surface-solid)", borderColor:"var(--border)" }}><Settings className="w-5 h-5"/></button>
+        </div>
+      </div>
+
+      {!isInstalled && (installPrompt || manualInstallInfo) && !installDismissed && (
+        <div className="absolute top-[84px] left-4 right-4 z-40 mx-auto max-w-[520px] rounded-2xl p-4 shadow-xl border backdrop-blur" style={{background:"var(--surface)",borderColor:"var(--border)"}}>
+          <div className="flex items-start gap-3"><Download className="w-5 h-5 mt-0.5" style={{color:"var(--accent)"}}/><div className="flex-1"><p className="font-semibold text-sm">Install Neto</p><p className="text-xs mt-1" style={{color:"var(--muted)"}}>{manualInstallInfo && !installPrompt ? `A couple of taps on ${manualInstallInfo.platform}.` : "Install it like an app for faster access and a standalone window."}</p></div><button onClick={()=>{setInstallDismissed(true);localStorage.setItem("voice-orb-install-dismissed","1")}} aria-label="Dismiss" className="text-sm opacity-60">×</button></div>
+          <button onClick={()=>installPrompt ? installApp() : openPanel(setInstallOpen)} className="mt-3 w-full h-10 rounded-full text-sm font-semibold text-white" style={{background:"var(--accent)"}}>{installPrompt ? "Install app" : "Show me how"}</button>
+        </div>
+      )}
+
+      <div className={`neto-stage voice-stage flex flex-col items-center justify-center h-full min-h-[100dvh] px-4 pt-[max(78px,calc(env(safe-area-inset-top)+68px))] pb-[max(96px,calc(env(safe-area-inset-bottom)+84px))] select-none ${captionFocusOpen ? "caption-focus" : ""}`}>
+        {!hasStarted && <div className="neto-intro text-center">
+          <h1>What can we work through?</h1>
+        </div>}
+        <div className="h-7 mt-5 mb-2 flex items-center justify-center">{statusText ? <span className="neto-status-pill"><span className="neto-status-dot" />{statusText}</span> : <span className="neto-ready"><span className="neto-status-dot" />Ready</span>}</div>
+        <div className={videoConversationActive ? "mb-4 w-[min(360px,82vw)] overflow-hidden rounded-2xl border shadow-lg" : "hidden"} style={{borderColor:"var(--border)",background:"var(--surface-solid)"}}><div className="relative"><video ref={cameraVideoRef} muted playsInline className={`block w-full aspect-video object-cover ${cameraFacing === "user" ? "-scale-x-100" : ""}`}/><button aria-label="Switch front or back camera" onClick={switchCamera} className="absolute right-2 top-2 w-9 h-9 rounded-full flex items-center justify-center text-white bg-black/55 backdrop-blur active:scale-95"><RotateCcw className="w-4 h-4"/></button></div><div className="flex items-center gap-2 px-3 py-2 text-xs font-medium" style={{color:"var(--muted)"}}><Camera className="w-3.5 h-3.5"/> Gemini is seeing your camera</div></div>
+        <div className="relative flex items-center justify-center orb-reactive" style={{ "--orb-energy": orbEnergy } as CSSProperties}>
+          {orbStyle !== "particle" && (status === "listening" || status === "speaking") && [0,1,2].map(i => <div key={i} className="absolute w-[min(290px,78vw)] h-[min(290px,78vw)] rounded-full border pointer-events-none" style={{borderColor:status==="speaking"?"rgba(16,163,127,.22)":"rgba(100,140,255,.25)",animation:`pulseRing ${status==="speaking"?"1.25":"1.8"}s ease-out ${i*.3}s infinite`}}/>) }
+          {orbStyle !== "particle" && <OrbSparkles status={status} energy={orbEnergy} />}
+          <div className={orbStyle === "particle" ? "hidden" : "absolute rounded-full blur-[20px] transition-all duration-700 pointer-events-none"} style={{width: status === "listening" ? "min(340px, 86vw)" : "min(300px, 80vw)", height: status === "listening" ? "min(340px, 86vw)" : "min(300px, 80vw)", background:"radial-gradient(circle,var(--orb-glow),transparent 70%)"}} />
+          <button aria-label="Neto" onPointerDown={e=>{e.preventDefault();handleOrbTap()}} className="relative rounded-full overflow-hidden will-change-transform focus:outline-none touch-none active:scale-[0.98] transition-transform" style={{width:videoConversationActive ? "min(180px, 48vw)" : "min(270px, min(72vw, 34vh))",height:videoConversationActive ? "min(180px, 48vw)" : "min(270px, min(72vw, 34vh))",background:orbStyle === "particle" ? "transparent" : "linear-gradient(180deg,var(--orb-top) 0%,var(--orb-mid) 48%,var(--orb-bottom) 100%)",boxShadow:orbStyle === "particle" ? "0 18px 42px rgba(239,126,42,.18)" : "0 20px 54px var(--orb-glow), inset 0 1px 0 rgba(255,255,255,.95), inset 0 -16px 32px rgba(255,255,255,.65)",animation:status==="idle"?"breatheIdle 4s ease-in-out infinite":status==="listening"?"breatheListening 1.2s ease-in-out infinite":status==="thinking"?"breatheThinking 1.7s ease-in-out infinite":"breatheSpeaking 1.05s ease-in-out infinite"}}>
+            <div className="absolute inset-0">
+              {orbStyle === "particle" ? <ParticleOrb energy={orbEnergy} /> : <>
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6%] w-[92%] h-[58%] rounded-[50%] blur-[12px] bg-white/80" />
+              <div className="absolute w-[58%] h-[28%] left-[12%] top-[46%] rounded-full blur-[16px] bg-white/70" style={{animation:`cloudDrift ${status==="speaking"?"2.8":"7"}s ease-in-out infinite`}} />
+              <div className="absolute w-[46%] h-[24%] right-[14%] top-[56%] rounded-full blur-[14px] bg-white/60" style={{animation:`cloudDrift2 ${status==="speaking"?"2.3":"6"}s ease-in-out .3s infinite`}} />
+              <div className="absolute w-[42%] h-[22%] left-[28%] bottom-[18%] rounded-full blur-[18px] bg-white/65" style={{animation:`cloudDrift ${status==="speaking"?"3.1":"8"}s ease-in-out .6s infinite`}} />
+              <div className="absolute top-[-8%] left-1/2 -translate-x-1/2 w-[78%] h-[48%] rounded-full blur-[18px] opacity-60" style={{background:"radial-gradient(60% 60% at 50% 40%,rgba(255,255,255,.9),rgba(160,190,255,.35) 60%,transparent 85%)",animation:`shimmer ${status==="speaking"?"2.2":"5"}s ease-in-out infinite`}} />
+              {status === "speaking" && <><div className="absolute inset-[18%] rounded-full border border-white/30" style={{animation:"speakingWave .8s ease-in-out infinite"}}/><div className="absolute inset-[28%] rounded-full border border-white/35" style={{animation:"speakingWave .8s ease-in-out .25s infinite"}}/></>}
+              <div className="absolute inset-[1px] rounded-full shadow-[inset_0_0_24px_rgba(255,255,255,.9),inset_0_0_64px_rgba(255,255,255,.45)]"/>
+              </>}
+            </div>
+          </button>
+          {(imageAttachment || uploadingFileName) && (status === "listening" || status === "thinking" || status === "speaking") && <div className="voice-image-float" aria-label="Image shared in voice conversation">
+            {imageAttachment?.mimeType.startsWith("image/") ? <img src={imageAttachment.url} alt={imageAttachment.name} /> : <div className="voice-image-file">FILE</div>}
+            <div className="voice-image-meta"><strong>{imageAttachment?.name || uploadingFileName}</strong><span>{uploadingFile ? `Uploading ${uploadProgress}%` : "In voice conversation"}</span></div>
+            {!uploadingFile && <button aria-label="Remove shared image" onClick={()=>setImageAttachment(null)}><X className="w-3.5 h-3.5" /></button>}
+          </div>}
+          {showIdentityCard && <div className="identity-card" aria-label={`User profile: ${currentUser?.displayName || "Guest"}`}>
+            <span className="identity-thread" aria-hidden="true" />
+            <div className="identity-avatar"><UserRound className="w-4 h-4" /></div>
+            <div className="min-w-0"><span className="identity-eyebrow">Speaking with</span><strong>{currentUser?.displayName || "Guest"}</strong></div>
+          </div>}
+        </div>
+        {captionsEnabled && captionLines.length > 0 && <div ref={captionScrollRef} className={`orb-caption ${captionFocusOpen ? "caption-focus-panel" : ""}`} aria-label="Live captions" role="button" tabIndex={0} aria-pressed={captionFocusOpen} aria-live="polite" onClick={() => setCaptionFocusOpen(v => !v)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCaptionFocusOpen(v => !v); } }}>
+          <button type="button" aria-label="Toggle italic captions" title="Toggle italic captions" onClick={e => { e.stopPropagation(); setItalicCaptions(value => { const next = !value; localStorage.setItem("neto-italic-captions", next ? "1" : "0"); return next; }); }} className={`caption-style-toggle ${italicCaptions ? "italic font-semibold" : ""}`}>I</button>
+          {captionLines.map(line => <div className={`caption-line caption-${line.speaker} ${line.final ? "is-final" : "is-live"}`} key={line.id}>
+            <span className="caption-speaker">{line.speaker === "human" ? "You" : "Neto"}</span>
+            <span className={italicCaptions ? "italic" : ""}>{line.text}</span>
+          </div>)}
+        </div>}
+        <div className="voice-hint mt-6 sm:mt-10 text-center max-w-[300px]"><p className="text-[12.5px] sm:text-[13px] leading-[18px] font-medium" style={{color:"var(--muted)"}}>{status==="idle"?"Tap the orb to speak":status==="listening"?"Listening — speak naturally · tap orb to end":status==="thinking"?"Neto is preparing a reply":"Speaking — tap orb to end"}</p></div>
+      </div>
+
+      <div className="absolute bottom-0 left-0 right-0 z-20 px-3 sm:px-6 pb-[max(12px,env(safe-area-inset-bottom))] pt-2" style={{background:"linear-gradient(to top,var(--bg) 60%,transparent)"}}>
+        <div className="absolute bottom-[72px] sm:bottom-[76px] left-0 right-0 z-10 pointer-events-none text-center px-4 pb-1">
+          <p className="text-[10px] sm:text-[11px] italic font-medium" style={{color:"var(--muted)"}}>© 2026 Created by MacDonald | Powered by Mixfia</p>
+        </div>
+<div className={`mx-auto max-w-[560px] flex items-center gap-2 sm:gap-2.5 ${compactMode ? "scale-[0.98]" : ""}`}>
+          <div className="flex-1 h-12 sm:h-[52px] rounded-full shadow-sm border flex items-center pl-1.5 sm:pl-2 pr-2.5 sm:pr-3 gap-2" style={{background:"var(--surface-solid)",borderColor:"var(--border)"}}>
+            <button aria-label="Attach image or file" disabled={uploadingFile} onClick={()=>{
+              const input=document.createElement("input");
+              input.type="file";
+              input.accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xml,.html,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/json,application/xml,text/html";
+              input.onchange=async()=>{
+                const file=input.files?.[0];
+                if(!file) return;
+                if(file.size > 10 * 1024 * 1024){ setTranscript("Files must be 10 MB or smaller."); return; }
+                setUploadingFile(true);
+                setUploadingFileName(file.name);
+                setUploadProgress(0);
+                setTranscript(`Uploading ${file.name}…`);
+                try {
+                  let text: string | undefined;
+                  if(file.type.startsWith("text/") || /json|csv|xml/.test(file.type) || /\.(txt|md|json|csv|xml|html)$/i.test(file.name)) {
+                    text = await file.text();
+                    if(text.length > 12000) text = text.slice(0,12000);
+                  }
+                  const uploaded = await uploadAttachment(file, progress => {
+                    setUploadProgress(progress);
+                    setTranscript(`Uploading ${file.name}… ${progress}%`);
+                  });
+                  const nextAttachment = {...uploaded, text};
+                  setImageAttachment(nextAttachment);
+                  const sharedInVoice = await shareImageWithLive(nextAttachment);
+                  setTranscript(sharedInVoice ? `${file.name} shared with Neto.` : `${file.name} uploaded.`);
+                } catch (error: any) {
+                  setTranscript(error?.code === "storage/unauthorized" ? "Sign in with Google before uploading a private image or file." : (error?.message || "Upload failed. Please try again."));
+                } finally {
+                  setUploadingFile(false);
+                  setUploadingFileName("");
+                  setUploadProgress(0);
+                }
+              };
+              input.click();
+            }} className="w-9 h-9 rounded-full flex items-center justify-center transition shrink-0 disabled:opacity-50 active:scale-95" style={{background:"var(--accent-soft)"}}>{imageAttachment?<ImagePlus className="w-4 h-4 sm:w-5 sm:h-5"/>:<Plus className="w-4 h-4 sm:w-5 sm:h-5"/>}</button>
+            <div className="flex-1 min-w-0 relative">
+              {intentHint && (
+                <div className="absolute z-30 bottom-[52px] left-0 right-0 rounded-2xl border px-3 py-2 text-[11px] shadow-lg" style={{background:"var(--surface-solid)",borderColor:"var(--border)",color:"var(--muted)"}}>
+                  <span className="font-semibold" style={{color:"var(--text)"}}>{selectedIntent || "Intent"}: </span>{intentHint}
+                </div>
+              )}
+              {(imageAttachment || uploadingFileName) && (
+                <div className="absolute z-30 bottom-[52px] left-0 flex items-center gap-2 rounded-2xl border p-2 shadow-lg max-w-[min(300px,82vw)]" style={{background:"var(--surface-solid)",borderColor:"var(--border)"}}>
+                  {imageAttachment?.mimeType.startsWith("image/") ? <img src={imageAttachment.url} alt={imageAttachment.name} className="w-11 h-11 rounded-xl object-cover"/> : <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[10px] font-bold" style={{background:"var(--accent-soft)",color:"var(--accent)"}}>{uploadingFile ? "UP…" : "FILE"}</div>}
+                  <div className="min-w-0"><span className="block text-xs font-semibold truncate max-w-[190px]">{imageAttachment?.name || uploadingFileName}</span><span className="block text-[10px] mt-0.5" style={{color:"var(--muted)"}}>{uploadingFile ? `Uploading ${uploadProgress}%` : "Ready to send"}</span></div>
+                  {!uploadingFile && <button aria-label="Remove attachment" onClick={()=>setImageAttachment(null)} className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{background:"var(--accent-soft)"}}><X className="w-3.5 h-3.5"/></button>}
+                </div>
+              )}
+              <input aria-label="Message" maxLength={12000} value={draftText} onChange={e=>{setHasStarted(true);setDraftText(e.target.value)}} onKeyDown={e=>{if(e.key==="Enter" && !e.shiftKey)submitText()}} placeholder={uploadingFile?`Uploading… ${uploadProgress}%`:status==="listening"?"Listening…":"Type a message…"} className="w-full bg-transparent outline-none text-base sm:text-[15px]" style={{color:"var(--text)"}} />
+              {uploadingFile && <div className="absolute left-0 right-0 -bottom-1 h-1 overflow-hidden rounded-full" style={{background:"var(--accent-soft)"}}><div className="h-full transition-all" style={{width:`${uploadProgress}%`,background:"var(--accent)"}} /></div>}
+              {draftText.trim() && !uploadingFile && (
+                <button aria-label="Send" onClick={submitText} className="absolute top-1/2 -translate-y-1/2 right-0 w-8 h-8 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform" style={{background:"var(--accent)"}}>
+                  <Send className="w-4 h-4"/>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <button aria-label={videoConversationActive ? "End Video Conversation" : "Start Video Conversation"} onClick={()=>{ if(videoConversationActive){ stopEverything(); } else { stopEverything(); startVideoConversation(); } }} className="w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full flex items-center justify-center shadow-sm border shrink-0 active:scale-95 transition-transform" style={{background:videoConversationActive?"rgba(239,68,68,.12)":"var(--surface-solid)",borderColor:"var(--border)",color:videoConversationActive?"#ef4444":"var(--text)"}}>{videoConversationActive?<Video className="w-5 h-5"/>:<Camera className="w-5 h-5"/>}</button>
+          <button aria-label={isMicMuted?"Unmute microphone":"Mute microphone"} onClick={toggleMic} className="w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full flex items-center justify-center shadow-sm border shrink-0 active:scale-95 transition-transform" style={{background:isMicMuted?"rgba(239,68,68,.12)":"var(--surface-solid)",borderColor:"var(--border)",color:isMicMuted?"#ef4444":"var(--text)"}}>{isMicMuted?<MicOff className="w-5 h-5"/>:<Mic className="w-5 h-5"/>}</button>
+          <button aria-label="End conversation" onClick={()=>setEndConfirmOpen(true)} className="w-12 h-12 sm:w-[52px] sm:h-[52px] rounded-full text-white flex items-center justify-center shadow-md shrink-0 active:scale-95 transition-transform" style={{background:"var(--text)"}}><X className="w-5 h-5"/></button>
+        </div>
+      </div>
+      <Overlay open={offlineNoticeOpen} onClose={()=>{ if (isOnline) setOfflineNoticeOpen(false); }} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-5 pb-[max(24px,env(safe-area-inset-bottom))] text-center">
+          <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{background:"rgba(239,68,68,.12)",color:"#dc2626"}}><WifiOff className="w-7 h-7"/></div>
+          <h3 className="text-lg font-semibold mt-4">Oops!</h3>
+          <p className="text-sm mt-2 leading-relaxed" style={{color:"var(--muted)"}}>Unable to load page. Please check your internet connection and try again.</p>
+          <div className="grid grid-cols-2 gap-2 mt-6">
+            {nativeAvailable && <button onClick={()=>runNativeAction("open_settings", {target:"wifi"})} className="h-12 rounded-full border font-semibold" style={{borderColor:"var(--border)",background:"var(--surface)"}}>Wi-Fi settings</button>}
+            <button onClick={()=>{ if (!navigator.onLine) { setTranscript("Still offline — check Wi-Fi or mobile data."); return; } const retry = failedRequestRef.current; failedRequestRef.current = null; setOfflineNoticeOpen(false); setTranscript("Back online. You can continue."); if (retry) void handleMessage(retry.text, retry.attachment, retry.speakResponse); }} className={`${nativeAvailable ? "" : "col-span-2"} h-12 rounded-full text-white font-semibold`} style={{background:"var(--accent)"}}>Try again</button>
+          </div>
+        </div>
+      </Overlay>
+
+      <Overlay open={permissionPromptOpen} onClose={()=>setPermissionPromptOpen(false)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-5 pb-[max(24px,env(safe-area-inset-bottom))] text-center">
+          <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)",color:"var(--accent)"}}><Mic className="w-7 h-7"/></div>
+          <h3 className="text-lg font-semibold mt-4">Allow microphone access?</h3>
+          <p className="text-sm mt-2 leading-relaxed" style={{color:"var(--muted)"}}>Neto uses the microphone only when you tap the orb to speak. Your phone will show the official permission prompt.</p>
+          {permissionMessage && <p role="status" className="mt-3 text-xs leading-relaxed" style={{color:"#dc2626"}}>{permissionMessage}</p>}
+          <button onClick={()=>void requestMicrophonePermission()} className="mt-6 w-full h-12 rounded-full text-white font-semibold" style={{background:"var(--accent)"}}>Allow microphone</button>
+          {nativeAvailable && <button onClick={()=>runNativeAction("open_app_settings")} className="mt-2 w-full h-11 rounded-full text-sm font-semibold border" style={{borderColor:"var(--border)",background:"var(--surface)"}}>Open app settings</button>}
+          <button onClick={()=>setPermissionPromptOpen(false)} className="mt-2 w-full h-10 rounded-full text-sm" style={{color:"var(--muted)"}}>Not now</button>
+        </div>
+      </Overlay>
+
+      <Overlay open={menuOpen} onClose={()=>closePanel(setMenuOpen)} side>
+        <div className="px-7 pt-[max(24px,env(safe-area-inset-top))] pb-6 border-b" style={{borderColor:"var(--border)"}}><div className="w-10 h-10 rounded-full mb-4" style={{background:"linear-gradient(180deg,var(--orb-top),var(--orb-bottom))"}}/><h2 className="text-lg font-semibold">Neto</h2><p className="text-sm mt-1" style={{color:"var(--muted)"}}>Voice-first AI assistant</p></div>
+        <nav className="p-3 flex flex-col gap-1.5"><Action icon={<Plus/>} text="New chat" onClick={()=>{setMenuOpen(false);intentionalStopRef.current=true;keepListeningRef.current=false;stopEverything();setTranscript("");setChatHistory([])}}/><Action icon={<Clock/>} text="History" onClick={()=>{setMenuOpen(false);openPanel(setHistoryOpen)}}/><Action icon={<Smartphone/>} text="Device" onClick={()=>{setMenuOpen(false);openPanel(setDeviceOpen)}}/><Action icon={<Settings/>} text="Settings" onClick={()=>{setMenuOpen(false);openPanel(setSettingsOpen)}}/><Action icon={<UserRound/>} text="About creator" onClick={()=>{setMenuOpen(false);openPanel(setAboutOpen)}}/><Action icon={<Download/>} text={isInstalled?"App installed":"Install app"} disabled={isInstalled} onClick={()=>{setMenuOpen(false);openPanel(setInstallOpen)}}/></nav>
+      </Overlay>
+
+      <Overlay open={connectorsOpen} onClose={()=>setConnectorsOpen(false)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))]">
+          <div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div>
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-3">
+              <button aria-label="Back to home" onClick={()=>setConnectorsOpen(false)} className="w-10 h-10 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/></button>
+              <div>
+                <h3 className="text-lg font-semibold">Connectors</h3>
+                <p className="text-xs" style={{color:"var(--muted)"}}>Secure access for Gmail, Calendar, and Drive</p>
+              </div>
+            </div>
+            <button onClick={()=>setConnectorsOpen(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><X className="w-4 h-4"/></button>
+          </div>
+
+          <div className="space-y-3">
+            {connectors.length === 0 ? (
+              <div className="rounded-2xl border p-4" style={{background:"var(--surface)", borderColor:"var(--border)"}}>
+                <p className="text-sm font-medium">No connectors available yet.</p>
+                <p className="text-xs mt-1" style={{color:"var(--muted)"}}>The backend must be configured with Google OAuth credentials first.</p>
+              </div>
+            ) : connectors.map((connector) => (
+              <div key={connector.id} className="rounded-2xl border p-3" style={{background:"var(--surface)", borderColor:"var(--border)"}}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{connector.name}</p>
+                    <p className="text-[11px] mt-1" style={{color:"var(--muted)"}}>{connector.status}</p>
+                  </div>
+                  <button
+                    onClick={() => void handleConnectorAction(connector.id, connector.connected ? "disconnect" : "connect")}
+                    disabled={connectorBusy}
+                    className="px-3 py-1.5 rounded-full text-[11px] font-semibold border"
+                    style={{background: connector.connected ? "var(--surface)" : "var(--accent)", color: connector.connected ? "var(--text)" : "#ffffff", borderColor: "var(--border)"}}
+                  >
+                    {connectorBusy ? "Working…" : connector.connected ? "Disconnect" : "Connect"}
+                  </button>
+                </div>
+                <p className="text-[11px] mt-2 leading-relaxed" style={{color:"var(--muted)"}}>{connector.privacy}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {connector.scopes.map((scope) => (
+                    <span key={scope} className="px-2 py-1 rounded-full text-[10px] uppercase tracking-wide" style={{background:"var(--accent-soft)", color:"var(--accent)"}}>{scope}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {connectorMessage && <p className="text-[11px] leading-relaxed" style={{color:"var(--accent)"}}>{connectorMessage}</p>}
+          </div>
+        </div>
+      </Overlay>
+
+      <Overlay open={deviceOpen} onClose={()=>closePanel(setDeviceOpen)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))]">
+          <div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div>
+          <div className="flex items-center justify-between mb-5"><div className="flex items-center gap-3"><button aria-label="Back to home" onClick={()=>closePanel(setDeviceOpen)} className="w-10 h-10 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/></button><div><h3 className="text-lg font-semibold">Device</h3><p className="text-xs" style={{color:"var(--muted)"}}>{nativeAvailable ? "NETO Android bridge connected" : "Web capabilities only"}</p></div></div><Smartphone className="w-5 h-5" style={{color:"var(--accent)"}}/></div>
+          <p className="text-sm leading-relaxed rounded-2xl p-4 border" style={{background:"var(--surface)",borderColor:"var(--border)",color:"var(--muted)"}}>Actions always open the official Android screen. NETO cannot grant permissions, send a message, or place a call silently.</p>
+          {nativeAvailable && <section className="mt-4"><div className="flex items-center justify-between"><p className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Device permissions</p><button onClick={refreshAndroidCapabilities} className="text-xs font-semibold" style={{color:"var(--accent)"}}>Refresh</button></div><div className="mt-2 space-y-2">
+            <CapabilityRow label="Microphone" enabled={!!androidCapabilities?.microphone} status={androidCapabilities?.microphone ? "Available" : "Permission required"} detail={androidCapabilities?.microphone ? "Voice input is ready." : androidCapabilities?.microphonePermanentlyDenied ? "Blocked in Android. Open app settings to allow it." : "Needed for Tap to Talk."} onClick={()=>runNativeAction(androidCapabilities?.microphonePermanentlyDenied ? "open_app_settings" : "request_capability", androidCapabilities?.microphonePermanentlyDenied ? {} : {target:"microphone"})}/>
+            <CapabilityRow label="Camera" enabled={!!androidCapabilities?.camera} status={androidCapabilities?.camera ? "Available" : "Permission required"} detail="Needed only when a page requests camera capture." onClick={()=>runNativeAction("request_capability",{target:"camera"})}/>
+            <CapabilityRow label="Contacts" enabled={!!androidCapabilities?.contacts} status={androidCapabilities?.contacts ? "Available" : "Permission required"} detail="Used only to look up a requested call or SMS recipient." onClick={()=>runNativeAction("request_capability",{target:"contacts"})}/>
+            <CapabilityRow label="Notifications" enabled={!!androidCapabilities?.notifications} status={androidCapabilities?.notifications ? "Available" : "Permission required"} detail="Controls NETO notifications where Android requires permission." onClick={()=>runNativeAction("request_capability",{target:"notifications"})}/>
+            <CapabilityRow label="Accessibility Service" enabled={!!androidCapabilities?.accessibility} status={androidCapabilities?.accessibility ? "Available" : "Needs setup"} detail="Required for owner-authorized screen reading and UI actions." onClick={()=>runNativeAction("open_accessibility_settings")}/>
+            <CapabilityRow label="Android bridge" enabled={!!androidCapabilities?.androidControl} status={androidCapabilities?.androidControl ? "Available" : "Unavailable"} detail="Connects NETO to its allowlisted Android actions."/><CapabilityRow label="Calls and SMS" enabled={!!androidCapabilities?.phone && !!androidCapabilities?.sms} status={androidCapabilities?.phone && androidCapabilities?.sms ? "Available" : "Unavailable"} detail="NETO opens Android’s dialer or messaging app; you confirm the final action." />
+            <CapabilityRow label="Voice recognition" enabled={!!androidCapabilities?.voiceRecognition} status={androidCapabilities?.voiceRecognition ? "Available" : "Unavailable"} detail={androidCapabilities?.voiceRecognition ? "Android SpeechRecognizer is available." : "This device has no available speech recognition service."}/><CapabilityRow label="Text-to-speech" enabled={!!androidCapabilities?.textToSpeech} status={androidCapabilities?.textToSpeech ? "Available" : "Unavailable"} detail={androidCapabilities?.textToSpeech ? "Android TTS is ready." : "Android text-to-speech is temporarily unavailable."}/><CapabilityRow label="Internet" enabled={!!androidCapabilities?.internet} status={androidCapabilities?.internet ? "Available" : "Unavailable"} detail={androidCapabilities?.internet ? "A network is available for NETO services." : "Connect to Wi-Fi or mobile data."}/><CapabilityRow label="Files" enabled={!!androidCapabilities?.files} status={androidCapabilities?.files ? "Available" : "Unavailable"} detail={androidCapabilities?.files ? "Android file picker is available." : "No compatible file picker is installed."}/>
+          </div></section>}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button onClick={()=>runNativeAction("open_settings")} className="h-16 rounded-2xl border text-sm font-semibold" style={{background:"var(--surface)",borderColor:"var(--border)"}}>Open settings</button>
+            <button onClick={()=>runNativeAction("open_url", { url: "https://neto-fnp7.onrender.com" })} className="h-16 rounded-2xl border text-sm font-semibold flex items-center justify-center gap-2" style={{background:"var(--surface)",borderColor:"var(--border)"}}>Open NETO site <ExternalLink className="w-4 h-4"/></button>
+            <button onClick={()=>{ const number = window.prompt("Phone number to dial:", ""); if (number) runNativeAction("make_call", { target: number }); }} className="h-16 rounded-2xl border text-sm font-semibold" style={{background:"var(--surface)",borderColor:"var(--border)"}}>Prepare call</button>
+            <button onClick={()=>{ const number = window.prompt("Recipient phone number:", ""); const body = number ? window.prompt("Message:", "") : null; if (number && body !== null) runNativeAction("compose_sms", { target: number, text: body }); }} className="h-16 rounded-2xl border text-sm font-semibold" style={{background:"var(--surface)",borderColor:"var(--border)"}}>Prepare SMS</button>
+          </div>
+          {nativeActionStatus && <p role="status" className="mt-4 text-sm text-center" style={{color:"var(--muted)"}}>{nativeActionStatus}</p>}
+        </div>
+      </Overlay>
+
+      <Overlay open={settingsOpen} onClose={()=>closePanel(setSettingsOpen)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="flex justify-center pt-1 pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div><div className="flex items-center justify-between mb-6"><button aria-label="Back to home" onClick={()=>closePanel(setSettingsOpen)} className="h-10 px-3 rounded-full flex items-center gap-2 font-semibold" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/>Back</button><h3 className="text-lg font-semibold">Settings</h3><button aria-label="Close settings" onClick={()=>closePanel(setSettingsOpen)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><X className="w-4 h-4"/></button></div>
+          <div className="space-y-6">
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>AI mode</label>
+              <div className="mt-3 grid grid-cols-2 gap-2 p-1 rounded-full border" style={{background:"var(--surface)",borderColor:"var(--border)"}}>
+                <button onClick={()=>{setAiMode("normal");localStorage.setItem("neto-ai-mode","normal")}} className="h-11 rounded-full text-sm font-semibold transition-colors" style={{background:aiMode==="normal"?"var(--text)":"transparent",color:aiMode==="normal"?"var(--bg)":"var(--text)"}}>Normal</button>
+                <button onClick={()=>{setAiMode("pro");localStorage.setItem("neto-ai-mode","pro")}} className="h-11 rounded-full text-sm font-semibold transition-colors" style={{background:aiMode==="pro"?"var(--text)":"transparent",color:aiMode==="pro"?"var(--bg)":"var(--text)"}}>Pro</button>
+              </div>
+              <p className="text-xs mt-2" style={{color:"var(--muted)"}}>
+                {aiMode === "normal" ? "Standard response mode with real-time voice streaming and multimodal capabilities." : "Advanced intelligence mode for deep reasoning and complex queries."}
+              </p>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between gap-3 rounded-2xl border p-3" style={{background:"var(--surface)", borderColor:"var(--border)"}}>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{color:"var(--muted)"}}>Connectors</p>
+                  <p className="text-[11px] mt-1" style={{color:"var(--muted)"}}>Gmail, Calendar, Drive</p>
+                </div>
+                <button onClick={()=>setConnectorsOpen(true)} className="px-3 py-2 rounded-full text-[11px] font-semibold" style={{background:"var(--accent)", color:"#fff"}}>{connectors.length ? "Manage" : "Add"}</button>
+              </div>
+            </section>
+
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Account</label>
+<div className="mt-3 p-4 rounded-2xl border flex items-center justify-between" style={{background:"var(--surface)",borderColor:"var(--border)"}}>
+  <div>
+    <p className="text-sm font-semibold">{currentUser ? currentUser.displayName || "Signed In" : "Not Signed In"}</p>
+    <p className="text-xs" style={{color:"var(--muted)"}}>{currentUser ? currentUser.email : "Sign in to save chat history and upload files."}</p>
+  </div>
+  <button onClick={currentUser ? logout : signIn} className="px-4 py-2 rounded-full text-xs font-semibold border" style={{background:currentUser?"var(--surface)":"var(--text)",color:currentUser?"var(--text)":"var(--bg)",borderColor:"var(--border)"}}>
+    {currentUser ? "Sign Out" : "Sign in with Google"}
+  </button>
+</div></section>
+
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Personalization</label>
+              <div className="mt-3 flex items-center justify-between min-h-14 px-4 py-3 rounded-2xl border" style={{background:"var(--surface)",borderColor:"var(--border)"}}>
+                <div className="pr-4"><p className="text-sm font-semibold">Show my name card</p><p className="text-xs mt-1" style={{color:"var(--muted)"}}>Display your name beside the Neto orb</p></div>
+                <button aria-label="Toggle name card" onClick={()=>setShowIdentityCard(value=>{const next=!value;localStorage.setItem("neto-show-identity-card",next?"1":"0");return next})} className="relative w-12 h-7 rounded-full shrink-0" style={{background:showIdentityCard?"var(--accent)":"var(--border)"}}><span className="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-all" style={{left:showIdentityCard?25:3}}/></button>
+              </div>
+            </section>
+
+            <section>
+              <label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Input Language</label>
+              <div className="mt-3 relative">
+                <select
+                  value={language}
+                  onChange={(e) => {
+                    setLanguage(e.target.value);
+                    localStorage.setItem("voice-orb-lang", e.target.value);
+                  }}
+                  className="w-full h-12 px-4 rounded-xl border appearance-none text-sm font-medium outline-none focus:ring-2 focus:ring-black/5"
+                  style={{background:"var(--surface)",borderColor:"var(--border)", color:"var(--text)"}}
+                >
+                  <option value="en-US">English (US)</option>
+                  <option value="en-GB">English (UK)</option>
+                  <option value="es-ES">Español (Spain)</option>
+                  <option value="es-MX">Español (Mexico)</option>
+                  <option value="fr-FR">Français</option>
+                  <option value="de-DE">Deutsch</option>
+                  <option value="it-IT">Italiano</option>
+                  <option value="pt-BR">Português (Brasil)</option>
+                  <option value="ja-JP">日本語 (Japanese)</option>
+                  <option value="ko-KR">한국어 (Korean)</option>
+                  <option value="zh-CN">中文 (Simplified)</option>
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-50">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+              </div>
+            </section>
+
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Theme</label><div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">{THEMES.map(t=><button key={t.id} onClick={()=>setTheme(t.id)} className="p-3 rounded-2xl border text-left" style={{background:theme===t.id?"var(--accent-soft)":"var(--surface)",borderColor:theme===t.id?"var(--accent)":"var(--border)"}}><span className="text-sm font-semibold">{t.label}</span><span className="block text-[11px] mt-1" style={{color:"var(--muted)"}}>{t.description}</span></button>)}</div></section>
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Voice</label><div className="mt-3 grid grid-cols-3 gap-2">{["Sky","Cove","Breeze"].map(v=><button key={v} onClick={()=>setVoice(v)} className="h-12 rounded-full border text-sm font-semibold" style={{background:voice===v?"var(--text)":"var(--surface)",color:voice===v?"var(--bg)":"var(--text)",borderColor:"var(--border)"}}>{v}</button>)}</div></section>
+            <section><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Orb style</label><div className="mt-3 grid grid-cols-2 gap-2 p-1 rounded-full border" style={{background:"var(--surface)",borderColor:"var(--border)"}}><button onClick={()=>{setOrbStyle("classic");localStorage.setItem("neto-orb-style","classic")}} className="h-11 rounded-full text-sm font-semibold" style={{background:orbStyle === "classic" ? "var(--text)" : "transparent",color:orbStyle === "classic" ? "var(--bg)" : "var(--text)"}}>Blue orb</button><button onClick={()=>{setOrbStyle("particle");localStorage.setItem("neto-orb-style","particle")}} className="h-11 rounded-full text-sm font-semibold" style={{background:orbStyle === "particle" ? "#e87928" : "transparent",color:orbStyle === "particle" ? "white" : "var(--text)"}}>Orange particle</button></div><p className="text-xs mt-2" style={{color:"var(--muted)"}}>Choose the orb that appears on the home screen.</p></section>
+            <section><div className="flex items-center justify-between h-14 px-4 rounded-full border" style={{background:"var(--surface)",borderColor:"var(--border)"}}><div><p className="text-sm font-semibold">Captions</p><p className="text-xs" style={{color:"var(--muted)"}}>Show your words and Neto replies below the orb</p></div><button aria-label="Toggle captions" onClick={()=>setCaptionsEnabled(v=>!v)} className="relative w-12 h-7 rounded-full" style={{background:captionsEnabled?"var(--accent)":"var(--border)"}}><span className="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-all" style={{left:captionsEnabled?25:3}}/></button></div></section><section><div className="flex items-center justify-between h-14 px-4 rounded-full border" style={{background:"var(--surface)",borderColor:"var(--border)"}}><div><p className="text-sm font-semibold">Experimental Live Voice (Disabled)</p><p className="text-xs" style={{color:"var(--muted)"}}>Optional experimental real-time conversation</p></div><button aria-label="Experimental live voice unavailable" disabled onClick={()=>{setVoiceMode(v=>!v); conversationActiveRef.current=false; if (voiceMode) { intentionalStopRef.current=true; keepListeningRef.current=false; disconnectLive(); }}} className="relative w-12 h-7 rounded-full" style={{background:voiceMode?"var(--accent)":"var(--border)"}}><span className="absolute top-[3px] w-5 h-5 rounded-full bg-white shadow-sm transition-all" style={{left:voiceMode?25:3}}/></button></div></section><section><div className="flex items-center justify-between"><label className="text-xs font-semibold tracking-wide uppercase" style={{color:"var(--muted)"}}>Speed</label><span className="text-xs font-medium px-2.5 py-1 rounded-full" style={{background:"var(--accent-soft)"}}>{speed.toFixed(1)}×</span></div><input aria-label="Voice speed" className="mt-4 w-full" type="range" min="0.7" max="1.4" step="0.1" value={speed} onChange={e=>setSpeed(parseFloat(e.target.value))}/></section>
+            <button onClick={()=>openPanel(setInstallOpen)} className="w-full h-12 rounded-full text-sm font-semibold border" style={{background:"var(--accent-soft)",borderColor:"var(--accent)"}}>{isInstalled?"Neto is installed":"Install Neto"}</button>
+          </div>
+        </div>
+      </Overlay>
+
+      <Overlay open={historyOpen} onClose={()=>closePanel(setHistoryOpen)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-6" style={{maxHeight:"80vh",overflowY:"auto"}}><div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div><div className="flex items-center justify-between mb-4">
+  <div className="flex items-center gap-2"><button aria-label="Back to home" onClick={()=>closePanel(setHistoryOpen)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/></button><h3 className="text-lg font-semibold">Conversation</h3></div>
+  <div className="flex gap-2">
+    {chatHistory.length > 0 && (
+      <>
+        <button onClick={() => exportConversation('txt')} title="Export as TXT" className="h-8 px-3 rounded-full flex items-center justify-center text-xs font-semibold border" style={{background:"var(--surface)", borderColor:"var(--border)"}}>
+          TXT
+        </button>
+        <button onClick={() => exportConversation('json')} title="Export as JSON" className="h-8 px-3 rounded-full flex items-center justify-center text-xs font-semibold border" style={{background:"var(--surface)", borderColor:"var(--border)"}}>
+          JSON
+        </button>
+      </>
+    )}
+    {chatHistory.length > 0 && currentUser && (
+      <button onClick={() => setClearHistoryConfirmOpen(true)} className="w-8 h-8 rounded-full flex items-center justify-center text-red-500" style={{background:"var(--accent-soft)"}}>
+        <Trash2 className="w-4 h-4"/>
+      </button>
+    )}
+    <button onClick={()=>closePanel(setHistoryOpen)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{background:"var(--accent-soft)"}}><X className="w-4 h-4"/></button>
+  </div>
+</div>
+<div className="relative mb-4">
+  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 opacity-50 pointer-events-none" />
+  <input
+    type="text"
+    value={historySearchQuery}
+    onChange={(e) => setHistorySearchQuery(e.target.value)}
+    placeholder={chatHistory.length === 0 ? "Search conversation (no messages yet)…" : "Search conversation messages…"}
+    disabled={chatHistory.length === 0}
+    className="w-full h-10 pl-9 pr-8 rounded-full text-sm border outline-none transition-colors disabled:opacity-60"
+    style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--text)" }}
+  />
+  {historySearchQuery && (
+    <button
+      aria-label="Clear search"
+      onClick={() => setHistorySearchQuery("")}
+      className="w-6 h-6 rounded-full absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center justify-center opacity-60 hover:opacity-100"
+      style={{ color: "var(--text)" }}
+    >
+      <X className="w-3.5 h-3.5" />
+    </button>
+  )}
+</div>
+{chatHistory.length === 0 ? (
+  <p className="text-sm text-center py-12" style={{color:"var(--muted)"}}>No messages yet.</p>
+) : filteredChatHistory.length === 0 ? (
+  <div className="text-center py-10">
+    <p className="text-sm font-medium" style={{color:"var(--muted)"}}>No messages matching "{historySearchQuery}"</p>
+    <button
+      onClick={() => setHistorySearchQuery("")}
+      className="mt-3 px-4 py-1.5 rounded-full text-xs font-semibold border"
+      style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--text)" }}
+    >
+      Clear search
+    </button>
+  </div>
+) : (
+  <div className="space-y-4">
+    {historySearchQuery.trim() && (
+      <p className="text-[11px] font-semibold tracking-wide uppercase px-1" style={{ color: "var(--muted)" }}>
+        Found {filteredChatHistory.length} {filteredChatHistory.length === 1 ? 'match' : 'matches'}
+      </p>
+    )}
+    {filteredChatHistory.map((m, i) => (
+      <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+        <div
+          className="max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed break-words"
+          style={{
+            background: m.role === "user" ? "var(--accent)" : "var(--accent-soft)",
+            color: m.role === "user" ? "#fff" : "var(--text)",
+          }}
+        >
+          {m.parts[0]?.text}
+        </div>
+      </div>
+    ))}
+  </div>
+)}</div>
+      </Overlay>
+
+      <Overlay open={clearHistoryConfirmOpen} onClose={()=>setClearHistoryConfirmOpen(false)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-center">
+          <div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div>
+          <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center border" style={{background:"rgba(239,68,68,.12)",borderColor:"var(--border)"}}>
+            <Trash2 className="w-6 h-6 text-red-500"/>
+          </div>
+          <h3 className="text-lg font-semibold mt-4">Clear all history?</h3>
+          <p className="text-sm mt-2" style={{color:"var(--muted)"}}>This will permanently delete all your saved conversations. This action cannot be undone.</p>
+          <div className="grid grid-cols-2 gap-2 mt-6">
+            <button onClick={()=>setClearHistoryConfirmOpen(false)} className="h-12 rounded-full border font-semibold" style={{borderColor:"var(--border)",background:"var(--surface)"}}>Cancel</button>
+            <button onClick={async () => {
+              await clearAllConversations();
+              setChatHistory([]);
+              setClearHistoryConfirmOpen(false);
+              setHistoryOpen(false);
+            }} className="h-12 rounded-full text-white font-semibold bg-red-500">Delete all</button>
+          </div>
+        </div>
+      </Overlay>
+
+      <Overlay open={aboutOpen} onClose={()=>closePanel(setAboutOpen)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div><div className="flex items-center gap-3"><button aria-label="Back to home" onClick={()=>closePanel(setAboutOpen)} className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/></button><div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{background:"linear-gradient(180deg,var(--orb-top),var(--orb-bottom))"}}><UserRound className="w-6 h-6"/></div><div><h3 className="text-lg font-semibold">About Neto</h3><p className="text-sm" style={{color:"var(--muted)"}}>Created by {CREATOR.name}</p></div></div><div className="mt-6 rounded-2xl p-4 border" style={{background:"var(--surface)",borderColor:"var(--border)"}}><p className="text-sm leading-relaxed">Neto is the AI assistant and product identity of the app. The company/product identity is <strong>Neto</strong>, and the verified creator is <strong>{CREATOR.name}</strong>. Neto should describe itself using these verified facts and should not invent a different creator or product identity.</p></div><section className="mt-4 rounded-2xl p-4 border" style={{background:"var(--surface)",borderColor:"var(--border)"}}><h4 className="text-sm font-semibold">App policy</h4><div className="mt-3 space-y-3 text-xs leading-relaxed" style={{color:"var(--muted)"}}><p><strong style={{color:"var(--text)"}}>Privacy.</strong> Neto uses conversation content to provide responses. Signed-in conversations and uploaded files may be stored so you can use history and attachments across sessions.</p><p><strong style={{color:"var(--text)"}}>Permissions.</strong> Microphone, camera, files, contacts, calls, messages, and accessibility access are requested only for the related feature. You control these permissions in your device or browser settings.</p><p><strong style={{color:"var(--text)"}}>Safety.</strong> AI responses can be incomplete or inaccurate. Review important information and confirm consequential device actions before proceeding.</p><p><strong style={{color:"var(--text)"}}>Control.</strong> You can stop voice sessions, remove attachments, clear saved history, sign out, or revoke permissions at any time.</p></div></section></div>
+      </Overlay>
+
+      <Overlay open={endConfirmOpen} onClose={()=>setEndConfirmOpen(false)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-center"><div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div><div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center border" style={{background:"var(--accent-soft)",borderColor:"var(--border)"}}><X className="w-6 h-6"/></div><h3 className="text-lg font-semibold mt-4">End conversation?</h3><p className="text-sm mt-2" style={{color:"var(--muted)"}}>Neto will stop speaking, close the microphone session, cancel pending work, and return the orb to idle.</p><div className="grid grid-cols-2 gap-2 mt-6"><button onClick={()=>setEndConfirmOpen(false)} className="h-12 rounded-full border font-semibold" style={{borderColor:"var(--border)",background:"var(--surface)"}}>Keep talking</button><button onClick={endAndSaveConversation} className="h-12 rounded-full text-white font-semibold" style={{background:"var(--text)"}}>End conversation</button></div></div>
+      </Overlay>
+
+      <Overlay open={installOpen} onClose={()=>closePanel(setInstallOpen)} bottom>
+        <div className="mx-auto max-w-[560px] px-6 pt-3 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="flex justify-center pb-4"><div className="w-9 h-1 rounded-full bg-black/10"/></div><div className="flex items-center gap-3"><button aria-label="Back to home" onClick={()=>closePanel(setInstallOpen)} className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{background:"var(--accent-soft)"}}><ArrowLeft className="w-4 h-4"/></button><Download className="w-6 h-6" style={{color:"var(--accent)"}}/><div><h3 className="text-lg font-semibold">Install Neto</h3><p className="text-sm" style={{color:"var(--muted)"}}>{isInstalled?"The app is already installed on this device.":manualInstallInfo?`${manualInstallInfo.platform} doesn't support one-tap install — add it manually:`:installPrompt?"Install Neto as a standalone app.":"Your browser will show its supported installation option when available."}</p></div></div>
+        {!isInstalled && manualInstallInfo && (
+          <ol className="mt-4 space-y-2 text-sm list-decimal list-inside" style={{color:"var(--text)"}}>
+            {manualInstallInfo.steps.map((step, i) => <li key={i}>{step}</li>)}
+          </ol>
+        )}
+        {!isInstalled && !manualInstallInfo && <button disabled={!installPrompt} onClick={installApp} className="mt-6 w-full h-12 rounded-full text-white font-semibold disabled:opacity-40" style={{background:"var(--accent)"}}>{installPrompt?"Install now":"Use your browser's Install / Add to Home Screen option"}</button>}
+        <button onClick={()=>closePanel(setInstallOpen)} className="mt-2 w-full h-11 rounded-full text-sm" style={{color:"var(--muted)"}}>Close</button></div>
+      </Overlay>
+    </div>
+  );
+}
+
+function CapabilityRow({ label, enabled, detail, onClick, status }: { label: string; enabled: boolean; detail: string; onClick?: () => void; status?: string }) { return <button disabled={!onClick} onClick={onClick} className="w-full text-left p-3 rounded-xl border disabled:cursor-default" style={{background:"var(--surface)",borderColor:"var(--border)"}}><div className="flex justify-between gap-3"><span className="text-sm font-semibold">{label}</span><span className="text-xs font-semibold" style={{color:enabled?"var(--accent)":"#dc2626"}}>{status || (enabled?"Available":"Unavailable")}</span></div><p className="mt-1 text-xs leading-relaxed" style={{color:"var(--muted)"}}>{detail}</p></button>; }
+
+function Action({ icon, text, onClick, disabled=false }: { icon: ReactNode; text: string; onClick:()=>void; disabled?:boolean }) { return <button disabled={disabled} onClick={onClick} className="w-full text-left h-11 px-4 rounded-full flex items-center gap-3 text-sm font-medium disabled:opacity-50" style={{color:"var(--text)"}}>{icon}<span className="[&>svg]:w-4 [&>svg]:h-4" style={{color:"var(--muted)"}}>{text}</span></button>; }
+
+function Overlay({ open, onClose, children, side=false, bottom=false }: { open:boolean; onClose:()=>void; children:ReactNode; side?:boolean; bottom?:boolean }) {
+  return (
+    <div className={`fixed inset-0 z-[70] ${open ? "visible" : "invisible pointer-events-none"}`}>
+      <div
+        className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${open ? "opacity-100" : "opacity-0"}`}
+        onClick={onClose}
+      />
+      <div
+        className={`absolute ${
+          side
+            ? "top-0 left-0 h-full w-[310px] max-w-[85vw] rounded-r-3xl smooth-scroll overflow-y-auto"
+            : "bottom-0 left-0 right-0 max-h-[90dvh] rounded-t-[28px] sm:rounded-t-3xl smooth-scroll overflow-y-auto"
+        } shadow-2xl transition-all duration-300 ease-out ${
+          open
+            ? "translate-x-0 translate-y-0 opacity-100"
+            : side ? "-translate-x-full opacity-0" : "translate-y-full opacity-0"
+        }`}
+        style={{ background: "var(--surface-solid)", color: "var(--text)" }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
