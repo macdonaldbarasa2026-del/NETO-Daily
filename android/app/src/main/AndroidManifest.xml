@@ -18,10 +18,6 @@
         android:theme="@style/Theme.NETODaily">
 
         <activity
-            android:name=".CrashActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".auth.AuthActivity"
             android:exported="false" />
 
