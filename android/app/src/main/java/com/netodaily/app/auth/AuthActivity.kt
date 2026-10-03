@@ -50,12 +50,15 @@ class AuthActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Supabase.client.auth.currentUserOrNull() != null) {
-            openApp()
-            return
+        scope.launch {
+            try {
+                if (Supabase.client.auth.currentUserOrNull() != null) {
+                    openApp()
+                    return@launch
+                }
+            } catch (_: Exception) {}
+            buildUi()
         }
-
-        buildUi()
     }
 
     private fun buildUi() {
@@ -272,7 +275,6 @@ class AuthActivity : AppCompatActivity() {
             confirmLabel.visibility = View.GONE
             confirmPasswordInput.visibility = View.GONE
         }
-
         statusText.visibility = View.GONE
     }
 
@@ -306,10 +308,9 @@ class AuthActivity : AppCompatActivity() {
 
         scope.launch {
             try {
-                val result = Supabase.client.auth.signUpWith(Email) {
+                Supabase.client.auth.signUpWith(Email) {
                     this.email = email
                     this.password = password
-
                     data = buildJsonObject {
                         put("display_name", name)
                     }
@@ -372,7 +373,6 @@ class AuthActivity : AppCompatActivity() {
                 }
 
                 showMessage("Signed in. Opening NETO...")
-
                 openApp()
 
             } catch (e: Exception) {
@@ -385,38 +385,26 @@ class AuthActivity : AppCompatActivity() {
 
     private fun authError(error: Exception): String {
         val message = error.message?.lowercase().orEmpty()
-
         return when {
             "invalid login credentials" in message ->
                 "The email or password is incorrect."
-
             "email not confirmed" in message ->
                 "Please confirm your email address before signing in."
-
             "user already registered" in message ->
                 "An account with this email already exists. Try signing in."
-
             "network" in message ||
             "timeout" in message ||
             "unable to resolve" in message ->
                 "We couldn't connect to NETO. Check your internet connection."
-
             else ->
                 "Authentication failed: ${error.message ?: "unknown error"}"
         }
     }
 
     private fun openApp() {
-        val session = Supabase.client.auth.currentSessionOrNull()
-
-        if (session == null) {
-            showError("NETO has no active session. Please sign in again.")
-            return
-        }
-
-        try {
-            startActivity(
-                android.content.Intent(
+        runOnUiThread {
+            try {
+                val intent = android.content.Intent(
                     this,
                     MainActivity::class.java
                 ).apply {
@@ -424,39 +412,46 @@ class AuthActivity : AppCompatActivity() {
                         android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
                         android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
                 }
-            )
-            finish()
-        } catch (e: Exception) {
-            showError(
-                "NETO could not open the main screen: ${e.message ?: "unknown error"}"
-            )
+                startActivity(intent)
+                finish()
+            } catch (e: Exception) {
+                showError(
+                    "NETO could not open the main screen: ${e.message ?: "unknown error"}"
+                )
+            }
         }
     }
 
     private fun showError(message: String) {
-        statusText.text = message
-        statusText.setTextColor(Color.rgb(150, 55, 45))
-        statusText.visibility = View.VISIBLE
+        runOnUiThread {
+            statusText.text = message
+            statusText.setTextColor(Color.rgb(150, 55, 45))
+            statusText.visibility = View.VISIBLE
+        }
     }
 
     private fun showMessage(message: String) {
-        statusText.text = message
-        statusText.setTextColor(accent)
-        statusText.visibility = View.VISIBLE
+        runOnUiThread {
+            statusText.text = message
+            statusText.setTextColor(accent)
+            statusText.visibility = View.VISIBLE
+        }
     }
 
     private fun setBusy(busy: Boolean) {
-        primaryButton.isEnabled = !busy
-        switchButton.isEnabled = !busy
+        runOnUiThread {
+            primaryButton.isEnabled = !busy
+            switchButton.isEnabled = !busy
 
-        primaryButton.text =
-            if (busy) {
-                if (creatingAccount) "Creating account..."
-                else "Signing in..."
-            } else {
-                if (creatingAccount) "Create account"
-                else "Sign in"
-            }
+            primaryButton.text =
+                if (busy) {
+                    if (creatingAccount) "Creating account..."
+                    else "Signing in..."
+                } else {
+                    if (creatingAccount) "Create account"
+                    else "Sign in"
+                }
+        }
     }
 
     private fun label(value: String): TextView =
