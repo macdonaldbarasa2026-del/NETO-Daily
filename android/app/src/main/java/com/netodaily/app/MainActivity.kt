@@ -1034,9 +1034,7 @@ class MainActivity : AppCompatActivity() {
 
         cameraController.stop()
 
-        liveScope.launch {
-            liveClient.release()
-        }
+        liveClient.release()
 
         liveScope.cancel()
 

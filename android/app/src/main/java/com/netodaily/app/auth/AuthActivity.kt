@@ -10,10 +10,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.netodaily.app.MainActivity
 import com.netodaily.app.Supabase
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
@@ -61,7 +61,10 @@ class AuthActivity : AppCompatActivity() {
     private fun buildUi() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -69,7 +72,7 @@ class AuthActivity : AppCompatActivity() {
         }
 
         val scroll = ScrollView(this).apply {
-            setFillViewport(true)
+            isFillViewport = true
         }
 
         val content = LinearLayout(this).apply {
@@ -83,7 +86,6 @@ class AuthActivity : AppCompatActivity() {
             textSize = 34f
             setTextColor(textColor)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            letterSpacing = 0.08f
             gravity = Gravity.CENTER
         }
 
@@ -92,7 +94,6 @@ class AuthActivity : AppCompatActivity() {
             textSize = 11f
             setTextColor(accent)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            letterSpacing = 0.18f
             gravity = Gravity.CENTER
         }
 
@@ -128,19 +129,22 @@ class AuthActivity : AppCompatActivity() {
         nameInput = input("What should NETO call you?")
 
         emailInput = input("Email address").apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            inputType =
+                InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
         }
 
         passwordInput = input("Password").apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            inputType =
+                InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
         confirmLabel = label("Confirm password")
         confirmPasswordInput = input("Enter your password again").apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            inputType =
+                InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
         statusText = TextView(this).apply {
@@ -169,22 +173,16 @@ class AuthActivity : AppCompatActivity() {
 
         form.addView(titleText, lp())
         form.addView(subtitleText, lp())
-
         form.addView(nameLabel, lp())
         form.addView(nameInput, lp(bottom = 14))
-
         form.addView(label("Email address"), lp())
         form.addView(emailInput, lp(bottom = 14))
-
         form.addView(label("Password"), lp())
         form.addView(passwordInput, lp(bottom = 14))
-
         form.addView(confirmLabel, lp())
         form.addView(confirmPasswordInput, lp(bottom = 18))
-
         form.addView(primaryButton, lp(height = 54))
         form.addView(switchButton, lp(height = 48))
-
         form.addView(statusText, lp())
 
         card.addView(
@@ -204,7 +202,8 @@ class AuthActivity : AppCompatActivity() {
         )
 
         val footer = TextView(this).apply {
-            text = "Your conversations and saved information stay connected to your NETO account."
+            text =
+                "Your conversations and saved information stay connected to your NETO account."
             textSize = 12f
             setTextColor(muted)
             gravity = Gravity.CENTER
@@ -241,6 +240,7 @@ class AuthActivity : AppCompatActivity() {
         }
 
         switchButton.setOnClickListener {
+            if (!primaryButton.isEnabled) return@setOnClickListener
             creatingAccount = !creatingAccount
             updateMode()
         }
@@ -251,7 +251,8 @@ class AuthActivity : AppCompatActivity() {
     private fun updateMode() {
         if (creatingAccount) {
             titleText.text = "Create your account"
-            subtitleText.text = "Set up NETO once, then your conversations, memories and saved items stay with you."
+            subtitleText.text =
+                "Set up NETO once, then your conversations, memories and saved items stay with you."
             primaryButton.text = "Create account"
             switchButton.text = "Already have an account? Sign in"
 
@@ -261,7 +262,8 @@ class AuthActivity : AppCompatActivity() {
             confirmPasswordInput.visibility = View.VISIBLE
         } else {
             titleText.text = "Welcome back"
-            subtitleText.text = "Sign in to continue your conversations with NETO."
+            subtitleText.text =
+                "Sign in to continue your conversations with NETO."
             primaryButton.text = "Sign in"
             switchButton.text = "New to NETO? Create an account"
 
@@ -304,21 +306,30 @@ class AuthActivity : AppCompatActivity() {
 
         scope.launch {
             try {
-                val user = Supabase.client.auth.signUpWith(Email) {
+                val result = Supabase.client.auth.signUpWith(Email) {
                     this.email = email
                     this.password = password
+
                     data = buildJsonObject {
                         put("display_name", name)
                     }
                 }
 
+                val user = Supabase.client.auth.currentUserOrNull()
+
                 if (user != null) {
-                    showMessage(
-                        "Your account has been created. Please check your email to confirm your address."
-                    )
-                } else {
                     openApp()
+                } else {
+                    showMessage(
+                        "Account created. Please confirm your email, then sign in."
+                    )
+                    creatingAccount = false
+                    updateMode()
+                    emailInput.setText(email)
+                    passwordInput.setText("")
+                    confirmPasswordInput.setText("")
                 }
+
             } catch (e: Exception) {
                 showError(authError(e))
             } finally {
@@ -350,7 +361,20 @@ class AuthActivity : AppCompatActivity() {
                     this.password = password
                 }
 
+                val user = Supabase.client.auth.currentUserOrNull()
+                val session = Supabase.client.auth.currentSessionOrNull()
+
+                if (user == null || session == null) {
+                    showError(
+                        "NETO signed in unsuccessfully. No active session was created."
+                    )
+                    return@launch
+                }
+
+                showMessage("Signed in. Opening NETO...")
+
                 openApp()
+
             } catch (e: Exception) {
                 showError(authError(e))
             } finally {
@@ -366,22 +390,45 @@ class AuthActivity : AppCompatActivity() {
             "invalid login credentials" in message ->
                 "The email or password is incorrect."
 
-            "user already registered" in message ->
-                "An account with this email already exists. Try signing in."
-
             "email not confirmed" in message ->
                 "Please confirm your email address before signing in."
 
-            "password" in message && "6" in message ->
-                "Your password must contain at least 6 characters."
+            "user already registered" in message ->
+                "An account with this email already exists. Try signing in."
 
             "network" in message ||
-                    "timeout" in message ||
-                    "unable to resolve" in message ->
+            "timeout" in message ||
+            "unable to resolve" in message ->
                 "We couldn't connect to NETO. Check your internet connection."
 
             else ->
-                "We couldn't complete that request. Please try again."
+                "Authentication failed: ${error.message ?: "unknown error"}"
+        }
+    }
+
+    private fun openApp() {
+        val session = Supabase.client.auth.currentSessionOrNull()
+
+        if (session == null) {
+            showError("NETO has no active session. Please sign in again.")
+            return
+        }
+
+        try {
+            startActivity(
+                android.content.Intent(
+                    this,
+                    MainActivity::class.java
+                ).apply {
+                    flags =
+                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+            )
+        } catch (e: Exception) {
+            showError(
+                "NETO could not open the main screen: ${e.message ?: "unknown error"}"
+            )
         }
     }
 
@@ -400,21 +447,15 @@ class AuthActivity : AppCompatActivity() {
     private fun setBusy(busy: Boolean) {
         primaryButton.isEnabled = !busy
         switchButton.isEnabled = !busy
-        primaryButton.text = if (busy) {
-            if (creatingAccount) "Creating account..." else "Signing in..."
-        } else {
-            if (creatingAccount) "Create account" else "Sign in"
-        }
-    }
 
-    private fun openApp() {
-        startActivity(
-            android.content.Intent(
-                this,
-                com.netodaily.app.MainActivity::class.java
-            )
-        )
-        finish()
+        primaryButton.text =
+            if (busy) {
+                if (creatingAccount) "Creating account..."
+                else "Signing in..."
+            } else {
+                if (creatingAccount) "Create account"
+                else "Sign in"
+            }
     }
 
     private fun label(value: String): TextView =
@@ -443,7 +484,11 @@ class AuthActivity : AppCompatActivity() {
     ): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            if (height == ViewGroup.LayoutParams.WRAP_CONTENT) height else dp(height)
+            if (height == ViewGroup.LayoutParams.WRAP_CONTENT) {
+                height
+            } else {
+                dp(height)
+            }
         ).apply {
             bottomMargin = dp(bottom)
         }
