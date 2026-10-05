@@ -131,6 +131,63 @@ class NetoPhoneAgent(
         return AgentResult(handled = false, feedback = "")
     }
 
+    private fun executeAddNote(title: String, content: String): AgentResult {
+        val cleanTitle = title.trim().ifBlank { "Voice Note" }
+        val cleanContent = content.trim()
+
+        if (cleanContent.isBlank()) {
+            return AgentResult(
+                handled = true,
+                feedback = "What should I put in the note?"
+            )
+        }
+
+        val note = DailyNote(
+            id = java.util.UUID.randomUUID().toString(),
+            title = cleanTitle,
+            content = cleanContent,
+            tag = "Voice"
+        )
+
+        store.addNote(note)
+
+        return AgentResult(
+            handled = true,
+            feedback = "Note saved: ${note.title}",
+            actionType = "add_note"
+        )
+    }
+
+    private fun executeReadNotes(): AgentResult {
+        val notes = store.getNotes()
+
+        if (notes.isEmpty()) {
+            return AgentResult(
+                handled = true,
+                feedback = "You don't have any saved notes yet."
+            )
+        }
+
+        val preview = notes
+            .take(5)
+            .joinToString("\n") { note ->
+                "• ${note.title}: ${note.content}"
+            }
+
+        val extra = if (notes.size > 5) {
+            "\nAnd ${notes.size - 5} more."
+        } else {
+            ""
+        }
+
+        return AgentResult(
+            handled = true,
+            feedback = "Your latest notes:\n$preview$extra",
+            actionType = "read_notes"
+        )
+    }
+
+
     private fun executeCall(target: String): AgentResult {
         return try {
             val number = if (target.matches(Regex("^[+0-9\\s()-]+$"))) {
