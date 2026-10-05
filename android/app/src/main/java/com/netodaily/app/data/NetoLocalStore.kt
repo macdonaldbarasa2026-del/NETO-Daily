@@ -179,7 +179,7 @@ class NetoLocalStore(context: Context) {
                 DailyHabit(
                     id = UUID.randomUUID().toString(),
                     name = "Drink 2L Water",
-                    icon = "💧",
+                    icon = "water",
                     category = "Health",
                     streak = 4,
                     completedToday = true
@@ -187,7 +187,7 @@ class NetoLocalStore(context: Context) {
                 DailyHabit(
                     id = UUID.randomUUID().toString(),
                     name = "30m Movement / Workout",
-                    icon = "🏃",
+                    icon = "fitness",
                     category = "Health",
                     streak = 6,
                     completedToday = false
@@ -195,7 +195,7 @@ class NetoLocalStore(context: Context) {
                 DailyHabit(
                     id = UUID.randomUUID().toString(),
                     name = "Read 15 Pages",
-                    icon = "📚",
+                    icon = "book",
                     category = "Mind",
                     streak = 3,
                     completedToday = false
@@ -203,7 +203,7 @@ class NetoLocalStore(context: Context) {
                 DailyHabit(
                     id = UUID.randomUUID().toString(),
                     name = "5m Mindfulness & Gratitude",
-                    icon = "🧘",
+                    icon = "mindfulness",
                     category = "Mind",
                     streak = 5,
                     completedToday = false
@@ -215,7 +215,7 @@ class NetoLocalStore(context: Context) {
         if (getNotes().isEmpty()) {
             val initialNote = DailyNote(
                 id = UUID.randomUUID().toString(),
-                title = "Welcome to NETO Daily 🌟",
+                title = "Welcome to NETO Daily",
                 content = "NETO Daily is your 2026 everyday companion. Track your daily agenda, build lasting habits, and talk to your live AI assistant via voice, chat, and vision.",
                 tag = "Welcome"
             )

@@ -18,7 +18,7 @@ data class DailyTask(
 data class DailyHabit(
     val id: String,
     val name: String,
-    val icon: String = "✨",
+    val icon: String = "default",
     val category: String = "Routine",
     val streak: Int = 1,
     val completedToday: Boolean = false,

@@ -104,7 +104,7 @@ class NetoPhoneAgent(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(dialIntent)
-            AgentResult(true, "📞 Calling $target ($number)...", "CALL")
+            AgentResult(true, "Calling $target ($number)...", "CALL")
         } catch (e: Exception) {
             AgentResult(true, "Could not place call: ${e.message}", "ERROR")
         }
@@ -145,7 +145,7 @@ class NetoPhoneAgent(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(smsIntent)
-            AgentResult(true, "💬 Opening message to $recipient...", "SMS")
+            AgentResult(true, "Opening message to $recipient...", "SMS")
         } catch (e: Exception) {
             AgentResult(true, "Could not open message: ${e.message}", "ERROR")
         }
@@ -186,7 +186,7 @@ class NetoPhoneAgent(
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     context.startActivity(intent)
-                    return AgentResult(true, "🚀 Opening ${appName.replaceFirstChar { it.uppercase() }}...", "APP")
+                    return AgentResult(true, "Opening ${appName.replaceFirstChar { it.uppercase() }}...", "APP")
                 }
             }
 
@@ -199,7 +199,7 @@ class NetoPhoneAgent(
                     if (intent != null) {
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         context.startActivity(intent)
-                        return AgentResult(true, "🚀 Launching ${pm.getApplicationLabel(app)}...", "APP")
+                        return AgentResult(true, "Launching ${pm.getApplicationLabel(app)}...", "APP")
                     }
                 }
             }
@@ -234,7 +234,7 @@ class NetoPhoneAgent(
                 val displayHour = if (hour % 12 == 0) 12 else hour % 12
                 val period = if (hour >= 12) "PM" else "AM"
                 val minFormatted = String.format(Locale.ROOT, "%02d", minute)
-                AgentResult(true, "⏰ Alarm set for $displayHour:$minFormatted $period!", "ALARM")
+                AgentResult(true, "Alarm set for $displayHour:$minFormatted $period!", "ALARM")
             } else {
                 AgentResult(true, "Please specify a time for the alarm (e.g. 'Set alarm for 7:30 AM').", "ALARM")
             }
@@ -282,7 +282,7 @@ class NetoPhoneAgent(
             if (cameraManager != null && cameraId != null) {
                 cameraManager.setTorchMode(cameraId, enable)
                 val status = if (enable) "turned on" else "turned off"
-                AgentResult(true, "🔦 Flashlight has been $status.", "FLASHLIGHT")
+                AgentResult(true, "Flashlight has been $status.", "FLASHLIGHT")
             } else {
                 AgentResult(true, "Flashlight hardware is unavailable.", "ERROR")
             }
@@ -311,12 +311,12 @@ class NetoPhoneAgent(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            AgentResult(true, "🌐 Searching for \"$query\"...", "SEARCH")
+            AgentResult(true, "Searching for \"$query\"...", "SEARCH")
         } catch (e: Exception) {
             val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))
             fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(fallback)
-            AgentResult(true, "🌐 Searching Google for \"$query\"...", "SEARCH")
+            AgentResult(true, "Searching Google for \"$query\"...", "SEARCH")
         }
     }
 
@@ -332,20 +332,20 @@ class NetoPhoneAgent(
             dateStr = todayStr
         )
         store.addTask(newTask)
-        return AgentResult(true, "🎯 Task added: \"$title\" to your daily schedule!", "TASK")
+        return AgentResult(true, "Task added: \"$title\" to your daily schedule!", "TASK")
     }
 
     private fun executeAddHabit(name: String): AgentResult {
         val newHabit = DailyHabit(
             id = UUID.randomUUID().toString(),
             name = name,
-            icon = "⚡",
+            icon = "default",
             category = "Daily",
             streak = 1,
             completedToday = false
         )
         store.addHabit(newHabit)
-        return AgentResult(true, "🔥 Habit added: \"$name\"! Consistency starts now.", "HABIT")
+        return AgentResult(true, "Habit added: \"$name\"! Consistency starts now.", "HABIT")
     }
 
     private fun executeReadSchedule(): AgentResult {
@@ -354,7 +354,7 @@ class NetoPhoneAgent(
             return AgentResult(true, "You have no tasks scheduled for today yet. What's your #1 priority?", "SCHEDULE")
         }
         val count = tasks.count { it.isCompleted }
-        val sb = StringBuilder("📋 You have ${tasks.size} tasks today ($count completed):\n")
+        val sb = StringBuilder("You have ${tasks.size} tasks today ($count completed):\n")
         tasks.take(4).forEach {
             val mark = if (it.isCompleted) "✓" else "○"
             sb.append("$mark ${it.title} (${it.timeSlot})\n")

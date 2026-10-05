@@ -153,11 +153,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     .setMessage(
                         "To call contacts, send messages, control your phone by voice, and use live audio — NETO needs:\n\n" +
                         "🎙️ Microphone — live voice input\n" +
-                        "📞 Phone — make calls by voice\n" +
-                        "💬 SMS — send messages by voice\n" +
+                        "Phone — make calls by voice\n" +
+                        "SMS — send messages by voice\n" +
                         "👤 Contacts — look up names\n" +
                         "📷 Camera — visual AI\n" +
-                        "🔔 Notifications — agent alerts\n\n" +
+                        "Notifications - agent alerts\n\n" +
                         "Tap Allow to enable all features."
                     )
                     .setPositiveButton("Allow") { _, _ ->
@@ -257,13 +257,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         quickChipsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        addQuickChip("📞 Call") { sendAgentPrompt("Call someone") }
-        addQuickChip("💬 Text") { sendAgentPrompt("Send message") }
-        addQuickChip("🚀 Open YouTube") { sendAgentPrompt("Open YouTube") }
-        addQuickChip("⏰ Alarm 7 AM") { sendAgentPrompt("Set alarm for 7:00 AM") }
-        addQuickChip("🔦 Flashlight") { sendAgentPrompt("Turn on flashlight") }
-        addQuickChip("🌐 Search") { sendAgentPrompt("Search Google for latest tech") }
-        addQuickChip("📋 Today's Plan") { sendAgentPrompt("What is my schedule today?") }
+        addQuickChip("Call", R.drawable.ic_call) { sendAgentPrompt("Call someone") }
+        addQuickChip("Text", R.drawable.ic_message) { sendAgentPrompt("Send message") }
+        addQuickChip("Open YouTube", R.drawable.ic_youtube) { sendAgentPrompt("Open YouTube") }
+        addQuickChip("Alarm 7 AM", R.drawable.ic_alarm) { sendAgentPrompt("Set alarm for 7:00 AM") }
+        addQuickChip("Flashlight", R.drawable.ic_flashlight) { sendAgentPrompt("Turn on flashlight") }
+        addQuickChip("Search", R.drawable.ic_search) { sendAgentPrompt("Search Google for latest tech") }
+        addQuickChip("Today's Plan", R.drawable.ic_tasks) { sendAgentPrompt("What is my schedule today?") }
         quickChipsScroll.addView(quickChipsRow)
         mainContentContainer.addView(quickChipsScroll)
 
@@ -447,19 +447,39 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun addQuickChip(label: String, onClick: () -> Unit) {
+    private fun addQuickChip(
+        label: String,
+        iconRes: Int,
+        onClick: () -> Unit
+    ) {
         val chip = TextView(this).apply {
             text = label
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorTextPrimary)
-            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_gemini_pill)
+            background = ContextCompat.getDrawable(
+                this@MainActivity,
+                R.drawable.bg_gemini_pill
+            )
+
+            setCompoundDrawablesWithIntrinsicBounds(
+                iconRes,
+                0,
+                0,
+                0
+            )
+            compoundDrawablePadding = dp(6)
+
             setPadding(dp(16), dp(8), dp(16), dp(8))
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
         lp.rightMargin = dp(8)
         chip.layoutParams = lp
         quickChipsRow.addView(chip)
