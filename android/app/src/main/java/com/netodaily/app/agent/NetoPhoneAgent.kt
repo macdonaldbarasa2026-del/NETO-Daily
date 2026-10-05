@@ -104,7 +104,7 @@ class NetoPhoneAgent(
                 ""
             ).trim()
 
-            return executeAddNote(noteText)
+            return executeAddNote("Voice Note", noteText)
         }
 
         if (
