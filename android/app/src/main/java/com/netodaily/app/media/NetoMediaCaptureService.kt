@@ -35,6 +35,12 @@ class NetoMediaCaptureService : Service() {
         const val EXTRA_RESULT_DATA =
             "result_data"
 
+        const val ACTION_STATE =
+            "com.netodaily.app.media.SCREEN_STATE"
+
+        const val EXTRA_ACTIVE =
+            "active"
+
         private const val CHANNEL =
             "neto_screen_share"
 
@@ -139,6 +145,8 @@ class NetoMediaCaptureService : Service() {
         capturing = true
         lastFrameAt = 0L
 
+        sendState(true)
+
         val notification =
             Notification.Builder(
                 this,
@@ -186,6 +194,8 @@ class NetoMediaCaptureService : Service() {
 
         val mediaProjection =
             projection ?: run {
+                capturing = false
+                sendState(false)
                 stopSelf()
                 return
             }
@@ -360,6 +370,7 @@ class NetoMediaCaptureService : Service() {
         lastFrameAt = 0L
 
         NetoScreenFrameBus.clear()
+        sendState(false)
 
         runCatching {
             display?.release()
@@ -386,6 +397,15 @@ class NetoMediaCaptureService : Service() {
 
         thread = null
         handler = null
+    }
+
+    private fun sendState(active: Boolean) {
+        sendBroadcast(
+            Intent(ACTION_STATE).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_ACTIVE, active)
+            }
+        )
     }
 
     private fun createChannel() {

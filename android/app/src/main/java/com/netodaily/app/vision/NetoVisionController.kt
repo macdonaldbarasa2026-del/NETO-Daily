@@ -1,7 +1,10 @@
 package com.netodaily.app.vision
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import com.netodaily.app.live.NetoLiveSession
 import com.netodaily.app.media.NetoCameraController
 import com.netodaily.app.media.NetoMediaCaptureService
@@ -28,6 +31,26 @@ class NetoVisionController(
 
     private var state = State.OFF
 
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != NetoMediaCaptureService.ACTION_STATE) {
+                return
+            }
+
+            val active = intent.getBooleanExtra(
+                NetoMediaCaptureService.EXTRA_ACTIVE,
+                false
+            )
+
+            if (!active && state == State.SCREEN) {
+                state = State.OFF
+                onStateChanged(state)
+            }
+        }
+    }
+
+    private var receiverRegistered = false
+
     private val frameRouter = NetoLiveFrameRouter { frame ->
         liveSession.sendVideoFrame(frame)
         onPreviewFrame(frame)
@@ -50,6 +73,28 @@ class NetoVisionController(
     }
 
     fun start() {
+        if (!receiverRegistered) {
+            val filter = IntentFilter(
+                NetoMediaCaptureService.ACTION_STATE
+            )
+
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(
+                    screenStateReceiver,
+                    filter,
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.registerReceiver(
+                    screenStateReceiver,
+                    filter
+                )
+            }
+
+            receiverRegistered = true
+        }
+
         frameRouter.start()
     }
 
@@ -152,6 +197,13 @@ class NetoVisionController(
         )
 
         frameRouter.stop()
+
+        if (receiverRegistered) {
+            runCatching {
+                context.unregisterReceiver(screenStateReceiver)
+            }
+            receiverRegistered = false
+        }
 
         state = State.OFF
         onStateChanged(state)
