@@ -133,6 +133,8 @@ class NetoVisionController(
     fun currentState(): State = state
 
     fun stop() {
+        NetoScreenFrameBus.clear()
+
         cameraController.stop()
 
         context.startService(
@@ -142,7 +144,6 @@ class NetoVisionController(
         )
 
         frameRouter.stop()
-        NetoScreenFrameBus.clear()
 
         state = State.OFF
         onStateChanged(state)

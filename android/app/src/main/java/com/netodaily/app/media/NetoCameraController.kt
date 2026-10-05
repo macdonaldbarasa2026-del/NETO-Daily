@@ -83,7 +83,10 @@ class NetoCameraController(
 
                     try {
                         val jpeg = yuvToJpeg(image)
-                        if (jpeg.isNotEmpty()) {
+                        if (
+                            running.get() &&
+                            jpeg.isNotEmpty()
+                        ) {
                             onFrame(jpeg)
                         }
                     } catch (t: Throwable) {
@@ -115,15 +118,28 @@ class NetoCameraController(
 
                     override fun onDisconnected(camera: CameraDevice) {
                         camera.close()
-                        cameraDevice = null
+
+                        if (running.get() && cameraDevice === camera) {
+                            cameraDevice = null
+                            onError(
+                                IllegalStateException(
+                                    "Camera disconnected."
+                                )
+                            )
+                        }
                     }
 
                     override fun onError(camera: CameraDevice, error: Int) {
                         camera.close()
-                        cameraDevice = null
-                        onError(
-                            IllegalStateException("Camera error: $error")
-                        )
+
+                        if (running.get() && cameraDevice === camera) {
+                            cameraDevice = null
+                            onError(
+                                IllegalStateException(
+                                    "Camera error: $error"
+                                )
+                            )
+                        }
                     }
                 },
                 handler
@@ -170,11 +186,13 @@ class NetoCameraController(
                 override fun onConfigureFailed(
                     session: CameraCaptureSession
                 ) {
-                    onError(
-                        IllegalStateException(
-                            "Unable to configure camera"
+                    if (running.get()) {
+                        onError(
+                            IllegalStateException(
+                                "Unable to configure camera"
+                            )
                         )
-                    )
+                    }
                 }
             },
             handler
