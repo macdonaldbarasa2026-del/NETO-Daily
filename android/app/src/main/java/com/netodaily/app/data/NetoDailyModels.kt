@@ -1,6 +1,7 @@
 package com.netodaily.app.data
 
 import kotlinx.serialization.Serializable
+import java.util.Locale
 
 @Serializable
 data class DailyTask(
@@ -33,3 +34,21 @@ data class DailyNote(
     val tag: String = "Daily Log",
     val timestamp: Long = System.currentTimeMillis()
 )
+
+object NetoDailyHabitIcons {
+    const val WATER = "water"
+    const val FITNESS = "fitness"
+    const val BOOK = "book"
+    const val MINDFULNESS = "mindfulness"
+    const val DEFAULT = "default"
+
+    fun normalize(value: String): String {
+        return when (value.lowercase(Locale.getDefault())) {
+            WATER -> WATER
+            FITNESS -> FITNESS
+            BOOK -> BOOK
+            MINDFULNESS -> MINDFULNESS
+            else -> DEFAULT
+        }
+    }
+}

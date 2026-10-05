@@ -26,6 +26,8 @@ import com.netodaily.app.ai.NetoDailyAiEngine
 import com.netodaily.app.auth.AuthActivity
 import com.netodaily.app.data.NetoConversation
 import com.netodaily.app.data.NetoLocalStore
+import com.netodaily.app.data.NetoDailyCloudSync
+import com.netodaily.app.data.NetoDailyWorkspace
 import com.netodaily.app.data.NetoMessage
 import com.netodaily.app.live.NetoLiveSession
 import com.netodaily.app.ui.NetoOrbView
@@ -42,6 +44,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private lateinit var store: NetoLocalStore
+    private lateinit var cloudSync: NetoDailyCloudSync
+    private lateinit var dailyWorkspace: NetoDailyWorkspace
     private lateinit var aiEngine: NetoDailyAiEngine
     private lateinit var phoneAgent: NetoPhoneAgent
     private var tts: TextToSpeech? = null
@@ -106,6 +110,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         store = NetoLocalStore(this)
+        cloudSync = NetoDailyCloudSync()
         val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         store.initDefaultDataIfEmpty(todayStr)
 
@@ -118,6 +123,58 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         requestRequiredPhonePermissions()
         buildGeminiLiveUi()
         setupLiveAndVision()
+        attachDailyWorkspace()
+
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                cloudSync.restoreIntoLocal(store)
+            }
+            dailyWorkspace.refresh()
+        }
+    }
+
+    private fun attachDailyWorkspace() {
+        dailyWorkspace = NetoDailyWorkspace(
+            context = this,
+            store = store,
+            onStudio = {
+                dailyWorkspace.rootView().visibility = View.GONE
+                mainContentContainer.visibility = View.VISIBLE
+            },
+            onSync = {
+                scope.launch(Dispatchers.IO) {
+                    cloudSync.syncAll(store)
+                }
+            },
+            onDeleteTask = { id ->
+                scope.launch(Dispatchers.IO) {
+                    cloudSync.deleteTask(id)
+                }
+            },
+            onDeleteHabit = { id ->
+                scope.launch(Dispatchers.IO) {
+                    cloudSync.deleteHabit(id)
+                }
+            },
+            onDeleteNote = { id ->
+                scope.launch(Dispatchers.IO) {
+                    cloudSync.deleteNote(id)
+                }
+            }
+        )
+
+        val dailyView = dailyWorkspace.build()
+
+        rootLayout.addView(
+            dailyView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        mainContentContainer.visibility = View.GONE
+        dailyView.visibility = View.VISIBLE
     }
 
     private fun requestRequiredPhonePermissions() {
@@ -152,11 +209,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     .setTitle("NETO needs permissions to be your agent")
                     .setMessage(
                         "To call contacts, send messages, control your phone by voice, and use live audio — NETO needs:\n\n" +
-                        "🎙️ Microphone — live voice input\n" +
+                        "Microphone - live voice input\n" +
                         "Phone — make calls by voice\n" +
                         "SMS — send messages by voice\n" +
-                        "👤 Contacts — look up names\n" +
-                        "📷 Camera — visual AI\n" +
+                        "Contacts - look up names\n" +
+                        "Camera - visual AI\n" +
                         "Notifications - agent alerts\n\n" +
                         "Tap Allow to enable all features."
                     )
@@ -310,6 +367,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             text = "● Gemini Live Ready"
             textSize = 12f
             setTextColor(colorAccent)
+            setOnClickListener {
+                if (::dailyWorkspace.isInitialized) {
+                    mainContentContainer.visibility = View.GONE
+                    dailyWorkspace.rootView().visibility = View.VISIBLE
+                    dailyWorkspace.refresh()
+                }
+            }
         }
         brandCol.addView(statusPill)
 

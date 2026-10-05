@@ -55,7 +55,7 @@ class NetoDailyCloudSync {
     )
 
     suspend fun restoreIntoLocal(store: NetoLocalStore) {
-        val userId = currentUserId() ?: return
+        currentUserId() ?: return
 
         runCatching {
             val tasks = get<TaskRow>("daily_tasks")
@@ -85,7 +85,7 @@ class NetoDailyCloudSync {
                         DailyHabit(
                             id = it.id,
                             name = it.name,
-                            icon = it.icon,
+                            icon = NetoDailyHabitIcons.normalize(it.icon),
                             category = it.category,
                             streak = it.streak,
                             completedToday = it.completedToday,
@@ -139,7 +139,7 @@ class NetoDailyCloudSync {
                         id = it.id,
                         userId = userId,
                         name = it.name,
-                        icon = it.icon,
+                        icon = NetoDailyHabitIcons.normalize(it.icon),
                         category = it.category,
                         streak = it.streak,
                         completedToday = it.completedToday,
@@ -165,11 +165,38 @@ class NetoDailyCloudSync {
         }
     }
 
-    private inline fun <reified T> get(table: String): List<T> {
+    suspend fun deleteTask(id: String) {
+        delete("daily_tasks", id)
+    }
+
+    suspend fun deleteHabit(id: String) {
+        delete("daily_habits", id)
+    }
+
+    suspend fun deleteNote(id: String) {
+        delete("daily_notes", id)
+    }
+
+    private fun delete(table: String, id: String) {
+        val userId = currentUserId() ?: return
+
         val connection = createConnection(
-            "$table?select=*",
-            "GET"
+            "$table?id=eq.$id&user_id=eq.$userId",
+            "DELETE"
         )
+
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                readBody(connection, code)
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private inline fun <reified T> get(table: String): List<T> {
+        val connection = createConnection("$table?select=*", "GET")
 
         return try {
             val code = connection.responseCode
@@ -237,18 +264,14 @@ class NetoDailyCloudSync {
         table: String,
         method: String
     ): HttpURLConnection {
-
         val session =
             Supabase.client.auth.currentSessionOrNull()
                 ?: error("No active Supabase session")
 
-        val url =
-            "${BuildConfig.SUPABASE_URL}/rest/v1/$table"
+        val url = "${BuildConfig.SUPABASE_URL}/rest/v1/$table"
 
         return (URL(url).openConnection() as HttpURLConnection).apply {
-
             requestMethod = method
-
             connectTimeout = 10_000
             readTimeout = 20_000
 
@@ -278,7 +301,6 @@ class NetoDailyCloudSync {
         connection: HttpURLConnection,
         code: Int
     ): String {
-
         val stream =
             if (code in 200..299) {
                 connection.inputStream

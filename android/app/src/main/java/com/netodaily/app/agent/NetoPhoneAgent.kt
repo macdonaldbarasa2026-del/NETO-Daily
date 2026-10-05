@@ -177,7 +177,7 @@ class NetoPhoneAgent(
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(camIntent)
-                return AgentResult(true, "📷 Opening Camera...", "APP")
+                return AgentResult(true, "Opening Camera...", "APP")
             }
 
             val pkg = knownPackages[cleanName]
