@@ -42,7 +42,12 @@ class NetoVisionController(
                 false
             )
 
-            if (!active && state == State.SCREEN) {
+            if (active) {
+                if (state != State.SCREEN) {
+                    state = State.SCREEN
+                    onStateChanged(state)
+                }
+            } else if (state == State.SCREEN) {
                 state = State.OFF
                 onStateChanged(state)
             }
