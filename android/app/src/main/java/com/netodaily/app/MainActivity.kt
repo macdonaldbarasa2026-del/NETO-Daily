@@ -996,7 +996,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         scope.cancel()
         liveSession.stop()
-        visionController.stop()
+        visionController.dispose()
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()

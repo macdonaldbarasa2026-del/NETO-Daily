@@ -145,8 +145,6 @@ class NetoMediaCaptureService : Service() {
         capturing = true
         lastFrameAt = 0L
 
-        sendState(true)
-
         val notification =
             Notification.Builder(
                 this,
@@ -186,16 +184,16 @@ class NetoMediaCaptureService : Service() {
                 MEDIA_PROJECTION_SERVICE
             ) as MediaProjectionManager
 
-        projection =
+        projection = runCatching {
             manager.getMediaProjection(
                 resultCode,
                 resultData
             )
+        }.getOrNull()
 
         val mediaProjection =
             projection ?: run {
-                capturing = false
-                sendState(false)
+                stopCapture()
                 stopSelf()
                 return
             }
@@ -347,7 +345,7 @@ class NetoMediaCaptureService : Service() {
             handler
         )
 
-        display =
+        display = runCatching {
             mediaProjection.createVirtualDisplay(
                 "NETO-Screen",
                 width,
@@ -359,6 +357,15 @@ class NetoMediaCaptureService : Service() {
                 null,
                 handler
             )
+        }.getOrNull()
+
+        if (display == null) {
+            stopCapture()
+            stopSelf()
+            return
+        }
+
+        sendState(true)
     }
 
     private fun stopCapture() {

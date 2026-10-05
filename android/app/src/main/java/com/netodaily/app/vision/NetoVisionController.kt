@@ -99,6 +99,8 @@ class NetoVisionController(
     }
 
     fun startFrontCamera() {
+        frameRouter.start()
+
         if (!cameraController.hasPermission()) {
             onStateChanged(State.OFF)
             return
@@ -113,6 +115,8 @@ class NetoVisionController(
     }
 
     fun startBackCamera() {
+        frameRouter.start()
+
         if (!cameraController.hasPermission()) {
             onStateChanged(State.OFF)
             return
@@ -153,6 +157,7 @@ class NetoVisionController(
             return
         }
 
+        frameRouter.start()
         stopCameraOnly()
         NetoScreenFrameBus.clear()
 
@@ -162,19 +167,20 @@ class NetoVisionController(
             putExtra(NetoMediaCaptureService.EXTRA_RESULT_DATA, data)
         }
 
-        context.startForegroundService(intent)
-
-        state = State.SCREEN
-        onStateChanged(state)
+        runCatching {
+            context.startForegroundService(intent)
+        }.onFailure {
+            NetoScreenFrameBus.clear()
+            state = State.OFF
+            onStateChanged(state)
+        }
     }
 
     fun stopScreenShare() {
         NetoScreenFrameBus.clear()
 
-        context.startService(
-            Intent(context, NetoMediaCaptureService::class.java).apply {
-                action = NetoMediaCaptureService.ACTION_STOP
-            }
+        context.stopService(
+            Intent(context, NetoMediaCaptureService::class.java)
         )
 
         if (state == State.SCREEN) {
@@ -190,12 +196,22 @@ class NetoVisionController(
 
         cameraController.stop()
 
-        context.startService(
-            Intent(context, NetoMediaCaptureService::class.java).apply {
-                action = NetoMediaCaptureService.ACTION_STOP
-            }
+        context.stopService(
+            Intent(context, NetoMediaCaptureService::class.java)
         )
 
+        frameRouter.stop()
+
+        state = State.OFF
+        onStateChanged(state)
+    }
+
+    fun dispose() {
+        NetoScreenFrameBus.clear()
+        cameraController.stop()
+        context.stopService(
+            Intent(context, NetoMediaCaptureService::class.java)
+        )
         frameRouter.stop()
 
         if (receiverRegistered) {
@@ -206,6 +222,5 @@ class NetoVisionController(
         }
 
         state = State.OFF
-        onStateChanged(state)
     }
 }
