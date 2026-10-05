@@ -83,10 +83,14 @@ class NetoLiveSession(
     private var sessionResumptionHandle: String? = null
     private var reconnectAttempt = 0
 
-    private companion object {
-        const val MAX_RECONNECT_ATTEMPTS = 3
-        const val RECONNECT_DELAY_MS = 1_000L
-    }
+    private val outboundChannel =
+        kotlinx.coroutines.channels.Channel<String>(
+            capacity = 8,
+            onBufferOverflow =
+                kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+        )
+
+    private var outboundJob: Job? = null
 
     fun start() {
         if (
@@ -142,6 +146,29 @@ class NetoLiveSession(
                 connected = true
                 closing = false
 
+                outboundJob =
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            for (message in outboundChannel) {
+                                if (closing) break
+
+                                runCatching {
+                                    socketMutex.withLock {
+                                        session?.send(
+                                            Frame.Text(message)
+                                        )
+                                    }
+                                }.onFailure {
+                                    if (!closing) {
+                                        scheduleReconnect()
+                                    }
+                                }
+                            }
+                        } catch (_: Throwable) {
+                            // Socket shutdown/cancellation is expected.
+                        }
+                    }
+
                 sendSetup()
 
                 player.start()
@@ -175,6 +202,9 @@ class NetoLiveSession(
             recorder = null
 
             player.stop()
+
+            outboundJob?.cancel()
+            outboundJob = null
 
             session = null
 
@@ -300,52 +330,33 @@ class NetoLiveSession(
             return
         }
 
-        scope.launch(Dispatchers.IO) {
-            val encoded =
-                Base64.encodeToString(
-                    pcm,
-                    Base64.NO_WRAP
-                )
+        val encoded =
+            Base64.encodeToString(
+                pcm,
+                Base64.NO_WRAP
+            )
 
-            val audio =
-                JSONObject()
-                    .put(
-                        "data",
-                        encoded
-                    )
-                    .put(
-                        "mimeType",
-                        INPUT_MIME
-                    )
-
-            val message =
-                JSONObject()
-                    .put(
-                        "realtimeInput",
-                        JSONObject()
-                            .put(
-                                "audio",
-                                audio
-                            )
-                    )
-
-            runCatching {
-                socketMutex.withLock {
-                    session?.send(
-                        Frame.Text(
-                            message.toString()
+        val message =
+            JSONObject()
+                .put(
+                    "realtimeInput",
+                    JSONObject()
+                        .put(
+                            "audio",
+                            JSONObject()
+                                .put(
+                                    "data",
+                                    encoded
+                                )
+                                .put(
+                                    "mimeType",
+                                    INPUT_MIME
+                                )
                         )
-                    )
-                }
-            }.onFailure {
-                if (!closing) {
-                    onError(
-                        it.message
-                            ?: "Audio transmission failed."
-                    )
-                }
-            }
-        }
+                )
+                .toString()
+
+        outboundChannel.trySend(message)
     }
 
     private suspend fun receiveLoop(
@@ -375,10 +386,7 @@ class NetoLiveSession(
             }
         } catch (t: Throwable) {
             if (!closing) {
-                onError(
-                    t.message
-                        ?: "NETO Live disconnected."
-                )
+                scheduleReconnect()
             }
         }
     }
@@ -640,10 +648,18 @@ class NetoLiveSession(
                         ?.takeIf { it.isNotBlank() }
 
                 if (token == null) {
+                    reconnecting = false
                     onError(
                         tokenResponse.error
                             ?: "NETO Live could not reconnect."
                     )
+
+                    if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+                        onStateChanged(State.IDLE)
+                    } else {
+                        scheduleReconnect()
+                    }
+
                     return@launch
                 }
 
@@ -703,6 +719,9 @@ class NetoLiveSession(
             session = null
             connected = false
 
+            outboundJob?.cancel()
+            outboundJob = null
+
             player.stop()
             onAudioLevel(0f)
             onStateChanged(State.IDLE)
@@ -720,52 +739,33 @@ class NetoLiveSession(
             return
         }
 
-        scope.launch(Dispatchers.IO) {
-            val encoded =
-                Base64.encodeToString(
-                    jpeg,
-                    Base64.NO_WRAP
-                )
+        val encoded =
+            Base64.encodeToString(
+                jpeg,
+                Base64.NO_WRAP
+            )
 
-            val video =
-                JSONObject()
-                    .put(
-                        "data",
-                        encoded
-                    )
-                    .put(
-                        "mimeType",
-                        "image/jpeg"
-                    )
-
-            val message =
-                JSONObject()
-                    .put(
-                        "realtimeInput",
-                        JSONObject()
-                            .put(
-                                "video",
-                                video
-                            )
-                    )
-
-            runCatching {
-                socketMutex.withLock {
-                    session?.send(
-                        Frame.Text(
-                            message.toString()
+        val message =
+            JSONObject()
+                .put(
+                    "realtimeInput",
+                    JSONObject()
+                        .put(
+                            "video",
+                            JSONObject()
+                                .put(
+                                    "data",
+                                    encoded
+                                )
+                                .put(
+                                    "mimeType",
+                                    "image/jpeg"
+                                )
                         )
-                    )
-                }
-            }.onFailure {
-                if (!closing) {
-                    onError(
-                        it.message
-                            ?: "Visual input failed."
-                    )
-                }
-            }
-        }
+                )
+                .toString()
+
+        outboundChannel.trySend(message)
     }
 
     fun sendText(
@@ -779,35 +779,19 @@ class NetoLiveSession(
             return
         }
 
-        scope.launch(Dispatchers.IO) {
-            val message =
-                JSONObject()
-                    .put(
-                        "realtimeInput",
-                        JSONObject()
-                            .put(
-                                "text",
-                                text.trim()
-                            )
-                    )
-
-            runCatching {
-                socketMutex.withLock {
-                    session?.send(
-                        Frame.Text(
-                            message.toString()
+        val message =
+            JSONObject()
+                .put(
+                    "realtimeInput",
+                    JSONObject()
+                        .put(
+                            "text",
+                            text.trim()
                         )
-                    )
-                }
-            }.onFailure {
-                if (!closing) {
-                    onError(
-                        it.message
-                            ?: "Message transmission failed."
-                    )
-                }
-            }
-        }
+                )
+                .toString()
+
+        outboundChannel.trySend(message)
     }
 
     fun release() {
@@ -816,6 +800,8 @@ class NetoLiveSession(
 
         tokenJob?.cancel()
         receiveJob?.cancel()
+        outboundJob?.cancel()
+        outboundJob = null
 
         recorder?.stop()
         recorder = null
