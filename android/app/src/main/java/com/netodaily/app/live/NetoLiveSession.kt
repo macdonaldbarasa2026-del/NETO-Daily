@@ -77,6 +77,17 @@ class NetoLiveSession(
     @Volatile
     private var closing = false
 
+    @Volatile
+    private var reconnecting = false
+
+    private var sessionResumptionHandle: String? = null
+    private var reconnectAttempt = 0
+
+    private companion object {
+        const val MAX_RECONNECT_ATTEMPTS = 3
+        const val RECONNECT_DELAY_MS = 1_000L
+    }
+
     fun start() {
         if (
             connected ||
@@ -86,6 +97,9 @@ class NetoLiveSession(
         }
 
         closing = false
+        reconnecting = false
+        reconnectAttempt = 0
+        sessionResumptionHandle = null
 
         onStateChanged(State.THINKING)
 
@@ -115,7 +129,11 @@ class NetoLiveSession(
     ) {
         try {
             val url =
-                "$WS_ENDPOINT?access_token=$token"
+                buildString {
+                    append(WS_ENDPOINT)
+                    append("?access_token=")
+                    append(token)
+                }
 
             httpClient.webSocket(
                 urlString = url
@@ -147,11 +165,7 @@ class NetoLiveSession(
             connected = false
 
             if (!closing) {
-                onError(
-                    "NETO Live connection failed: " +
-                        (t.message?.takeIf { it.isNotBlank() }
-                            ?: t.javaClass.simpleName)
-                )
+                scheduleReconnect()
             }
         } finally {
             connected = false
@@ -186,6 +200,14 @@ class NetoLiveSession(
                             "responseModalities",
                             org.json.JSONArray()
                                 .put("AUDIO")
+                        )
+                        .put(
+                            "sessionResumption",
+                            JSONObject().apply {
+                                sessionResumptionHandle
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { put("handle", it) }
+                            }
                         )
                         .put(
                             "inputAudioTranscription",
@@ -374,9 +396,32 @@ class NetoLiveSession(
                 return@runCatching
             }
 
-            if (
-                json.has("goAway")
-            ) {
+            val goAway =
+                json.optJSONObject("goAway")
+
+            if (goAway != null) {
+                // Google is warning that this WebSocket will terminate.
+                // Keep the current session handle and reconnect cleanly.
+                scheduleReconnect()
+                return@runCatching
+            }
+
+            val resumptionUpdate =
+                json.optJSONObject("sessionResumptionUpdate")
+
+            if (resumptionUpdate != null) {
+                val resumable =
+                    resumptionUpdate.optBoolean("resumable", false)
+
+                val newHandle =
+                    resumptionUpdate
+                        .optString("newHandle", "")
+                        .takeIf { it.isNotBlank() }
+
+                if (resumable && newHandle != null) {
+                    sessionResumptionHandle = newHandle
+                }
+
                 return@runCatching
             }
 
@@ -557,6 +602,63 @@ class NetoLiveSession(
         }
     }
 
+    private fun scheduleReconnect() {
+        if (
+            closing ||
+            reconnecting ||
+            !scope.isActive
+        ) {
+            return
+        }
+
+        if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+            onError("NETO Live connection ended. Please try again.")
+            onStateChanged(State.IDLE)
+            return
+        }
+
+        reconnecting = true
+        reconnectAttempt += 1
+
+        val attempt = reconnectAttempt
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.delay(
+                    RECONNECT_DELAY_MS * attempt
+                )
+
+                if (closing || !scope.isActive) {
+                    return@launch
+                }
+
+                val tokenResponse =
+                    tokenClient.requestToken()
+
+                val token =
+                    tokenResponse.token
+                        ?.takeIf { it.isNotBlank() }
+
+                if (token == null) {
+                    onError(
+                        tokenResponse.error
+                            ?: "NETO Live could not reconnect."
+                    )
+                    return@launch
+                }
+
+                reconnecting = false
+                connect(token)
+            } catch (t: Throwable) {
+                reconnecting = false
+
+                if (!closing) {
+                    scheduleReconnect()
+                }
+            }
+        }
+    }
+
     fun stop() {
         if (
             !connected &&
@@ -566,6 +668,9 @@ class NetoLiveSession(
         }
 
         closing = true
+        reconnecting = false
+        reconnectAttempt = 0
+        sessionResumptionHandle = null
         microphoneActive = false
 
         recorder?.stop()
