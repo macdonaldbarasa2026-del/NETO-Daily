@@ -22,8 +22,11 @@ class NetoPhoneAgent(
     data class AgentResult(
         val handled: Boolean,
         val feedback: String,
-        val actionType: String? = null
+        val actionType: String? = null,
+        val requiresConfirmation: Boolean = false
     )
+
+    private var pendingAction: (() -> AgentResult)? = null
 
     fun handleAgenticAction(query: String): AgentResult {
         val text = query.trim()
@@ -96,17 +99,43 @@ class NetoPhoneAgent(
             val number = if (target.matches(Regex("^[+0-9\\s()-]+$"))) {
                 target
             } else {
-                findContactNumber(target) ?: target
+                findContactNumber(target)
+                    ?: return AgentResult(
+                        true,
+                        "I couldn't find a phone number for $target. Check your Contacts permission or use the number directly.",
+                        "CALL_ERROR"
+                    )
             }
 
-            val dialIntent = Intent(Intent.ACTION_DIAL).apply {
-                data = Uri.parse("tel:$number")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            pendingAction = {
+                try {
+                    val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                        data = Uri.parse("tel:$number")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(dialIntent)
+                    AgentResult(
+                        true,
+                        "Opening the phone for $target ($number)...",
+                        "CALL"
+                    )
+                } catch (e: Exception) {
+                    AgentResult(
+                        true,
+                        "Could not open the phone: ${e.message}",
+                        "ERROR"
+                    )
+                }
             }
-            context.startActivity(dialIntent)
-            AgentResult(true, "Calling $target ($number)...", "CALL")
+
+            AgentResult(
+                handled = true,
+                feedback = "Call $target at $number?",
+                actionType = "CALL",
+                requiresConfirmation = true
+            )
         } catch (e: Exception) {
-            AgentResult(true, "Could not place call: ${e.message}", "ERROR")
+            AgentResult(true, "Could not prepare the call: ${e.message}", "ERROR")
         }
     }
 
@@ -132,23 +161,108 @@ class NetoPhoneAgent(
 
     private fun executeSms(text: String): AgentResult {
         return try {
-            val cleaned = text.replaceFirst(Regex("^(text|send sms to|send message to)\\s+", RegexOption.IGNORE_CASE), "")
-            val parts = cleaned.split(Regex(":\\s*|\\s+that\\s+|\\s+saying\\s+"), limit = 2)
+            val cleaned = text.replaceFirst(
+                Regex("^(text|send sms to|send message to)\\s+", RegexOption.IGNORE_CASE),
+                ""
+            )
+
+            val parts = cleaned.split(
+                Regex(":\\s*|\\s+that\\s+|\\s+saying\\s+"),
+                limit = 2
+            )
+
             val recipient = parts[0].trim()
-            val messageBody = if (parts.size > 1) parts[1].trim() else ""
+            val messageBody =
+                if (parts.size > 1) parts[1].trim() else ""
 
-            val number = if (recipient.matches(Regex("^[+0-9\\s()-]+$"))) recipient else findContactNumber(recipient) ?: recipient
-
-            val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
-                data = Uri.parse("smsto:$number")
-                if (messageBody.isNotEmpty()) putExtra("sms_body", messageBody)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (recipient.isBlank()) {
+                return AgentResult(
+                    true,
+                    "Tell me who you want to message.",
+                    "SMS_ERROR"
+                )
             }
-            context.startActivity(smsIntent)
-            AgentResult(true, "Opening message to $recipient...", "SMS")
+
+            val number =
+                if (recipient.matches(Regex("^[+0-9\\s()-]+$"))) {
+                    recipient
+                } else {
+                    findContactNumber(recipient)
+                        ?: return AgentResult(
+                            true,
+                            "I couldn't find $recipient in your contacts. Check Contacts permission or use the phone number.",
+                            "SMS_ERROR"
+                        )
+                }
+
+            if (messageBody.isBlank()) {
+                return AgentResult(
+                    true,
+                    "What message should I send to $recipient?",
+                    "SMS"
+                )
+            }
+
+            pendingAction = {
+                try {
+                    val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
+                        data = Uri.parse("smsto:$number")
+                        putExtra("sms_body", messageBody)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+
+                    context.startActivity(smsIntent)
+
+                    AgentResult(
+                        true,
+                        "Opening the message composer for $recipient.",
+                        "SMS"
+                    )
+                } catch (e: Exception) {
+                    AgentResult(
+                        true,
+                        "Could not open messages: ${e.message}",
+                        "ERROR"
+                    )
+                }
+            }
+
+            AgentResult(
+                handled = true,
+                feedback = "Send this message to $recipient?\n\n$messageBody",
+                actionType = "SMS",
+                requiresConfirmation = true
+            )
         } catch (e: Exception) {
-            AgentResult(true, "Could not open message: ${e.message}", "ERROR")
+            AgentResult(true, "Could not prepare the message: ${e.message}", "ERROR")
         }
+    }
+
+    fun confirmPendingAction(): AgentResult {
+        val action = pendingAction ?: return AgentResult(
+            handled = false,
+            feedback = ""
+        )
+
+        pendingAction = null
+        return runCatching {
+            action()
+        }.getOrElse {
+            AgentResult(
+                handled = true,
+                feedback = "The action failed: ${it.message}",
+                actionType = "ERROR"
+            )
+        }
+    }
+
+    fun cancelPendingAction(): AgentResult {
+        pendingAction = null
+        return AgentResult(
+            handled = true,
+            feedback = "Action cancelled.",
+            actionType = "CANCELLED"
+        )
     }
 
     private fun executeOpenApp(appName: String): AgentResult {

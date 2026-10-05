@@ -869,11 +869,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // 1. Check phone agent automation first
         val result = phoneAgent.handleAgenticAction(query)
         if (result.handled) {
-            showActionToast(result.feedback)
-            liveCaptionText.text = result.feedback
-            speakOutLoud(result.feedback)
-            orb.setState(NetoOrbView.State.IDLE)
-            statusPill.text = "● Action Completed"
+            presentAgentResult(result)
             return
         }
 
@@ -897,8 +893,63 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun checkAndExecuteAgentAction(text: String) {
         val result = phoneAgent.handleAgenticAction(text)
         if (result.handled) {
-            showActionToast(result.feedback)
+            presentAgentResult(result)
         }
+    }
+
+    private fun presentAgentResult(result: NetoPhoneAgent.AgentResult) {
+        if (!result.handled) return
+
+        if (!result.requiresConfirmation) {
+            showActionToast(result.feedback)
+            liveCaptionText.text = result.feedback
+            speakOutLoud(result.feedback)
+
+            orb.setState(NetoOrbView.State.IDLE)
+            statusPill.text =
+                if (result.actionType == "ERROR") {
+                    "● Action Failed"
+                } else {
+                    "● Action Completed"
+                }
+            return
+        }
+
+        val title =
+            when (result.actionType) {
+                "CALL" -> "Confirm call"
+                "SMS" -> "Confirm message"
+                else -> "Confirm action"
+            }
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(result.feedback)
+            .setNegativeButton("Cancel") { _, _ ->
+                val cancelled = phoneAgent.cancelPendingAction()
+                showActionToast(cancelled.feedback)
+                liveCaptionText.text = cancelled.feedback
+                speakOutLoud(cancelled.feedback)
+                orb.setState(NetoOrbView.State.IDLE)
+                statusPill.text = "● Cancelled"
+            }
+            .setPositiveButton("Confirm") { _, _ ->
+                val confirmed = phoneAgent.confirmPendingAction()
+                showActionToast(confirmed.feedback)
+                liveCaptionText.text = confirmed.feedback
+                speakOutLoud(confirmed.feedback)
+                orb.setState(NetoOrbView.State.IDLE)
+                statusPill.text =
+                    if (confirmed.actionType == "ERROR") {
+                        "● Action Failed"
+                    } else {
+                        "● Action Completed"
+                    }
+            }
+            .setOnCancelListener {
+                phoneAgent.cancelPendingAction()
+            }
+            .show()
     }
 
     private fun showActionToast(msg: String) {
