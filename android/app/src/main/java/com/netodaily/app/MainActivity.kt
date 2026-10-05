@@ -70,6 +70,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var visualPreview: ImageView
     private lateinit var visualPreviewLabel: TextView
 
+    // Full-screen native camera overlay
+    private lateinit var cameraOverlay: FrameLayout
+    private lateinit var cameraOverlayImage: ImageView
+
     // Bottom Controls
     private lateinit var micPillButton: LinearLayout
     private lateinit var micIcon: ImageView
@@ -173,8 +177,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
         )
 
-        mainContentContainer.visibility = View.GONE
-        dailyView.visibility = View.VISIBLE
+        // Live is the primary screen after authentication.
+        // Daily remains available through the workspace navigation.
+        mainContentContainer.visibility = View.VISIBLE
+        dailyView.visibility = View.GONE
     }
 
     private fun requestRequiredPhonePermissions() {
@@ -334,8 +340,123 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             topMargin = dp(8)
         })
 
-        rootLayout.addView(mainContentContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        rootLayout.addView(
+            mainContentContainer,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        buildCameraOverlay()
+
         setContentView(rootLayout)
+    }
+
+    private fun buildCameraOverlay() {
+        cameraOverlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
+            elevation = dp(24).toFloat()
+        }
+
+        cameraOverlayImage = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(Color.BLACK)
+            contentDescription = "NETO live camera"
+        }
+
+        cameraOverlay.addView(
+            cameraOverlayImage,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+
+        val title = TextView(this).apply {
+            text = "NETO CAMERA"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        }
+
+        topBar.addView(
+            title,
+            LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
+
+        val switchButton = ImageButton(this).apply {
+            setImageDrawable(
+                ContextCompat.getDrawable(
+                    this@MainActivity,
+                    R.drawable.ic_camera
+                )
+            )
+            background = ContextCompat.getDrawable(
+                this@MainActivity,
+                R.drawable.bg_circle_button
+            )
+            setColorFilter(Color.WHITE)
+            contentDescription = "Switch camera"
+
+            setOnClickListener {
+                if (::visionController.isInitialized) {
+                    visionController.switchCamera()
+                }
+            }
+        }
+
+        topBar.addView(
+            switchButton,
+            LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                rightMargin = dp(8)
+            }
+        )
+
+        val closeButton = TextView(this).apply {
+            text = "×"
+            textSize = 32f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = ContextCompat.getDrawable(
+                this@MainActivity,
+                R.drawable.bg_circle_button
+            )
+            contentDescription = "Close camera"
+
+            setOnClickListener {
+                stopVisualInput()
+            }
+        }
+
+        topBar.addView(
+            closeButton,
+            LinearLayout.LayoutParams(dp(48), dp(48))
+        )
+
+        cameraOverlay.addView(
+            topBar,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(80),
+                Gravity.TOP
+            )
+        )
+
+        rootLayout.addView(
+            cameraOverlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
     }
 
     private fun createTopHeader(): LinearLayout {
@@ -588,7 +709,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         liveCaptionText.text = text
 
                         // Check if the caption triggers an agentic phone action!
-                        if (speaker.lowercase(Locale.ROOT).contains("human") || speaker.isBlank()) {
+                        if (speaker.equals("You", ignoreCase = true) || speaker.isBlank()) {
                             checkAndExecuteAgentAction(text)
                         }
                     }
@@ -618,6 +739,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     if (bitmap != null) {
                         visualPreview.setImageBitmap(bitmap)
                         visualPreviewCard.visibility = View.VISIBLE
+
+                        if (::cameraOverlay.isInitialized &&
+                            visualState != NetoVisualState.Screen) {
+                            cameraOverlayImage.setImageBitmap(bitmap)
+                        }
                     }
                 }
             },
@@ -627,22 +753,39 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         NetoVisionController.State.FRONT_CAMERA -> {
                             visualState = NetoVisualState.FrontCamera
                             visualPreviewLabel.text = "Front camera"
-                            visualPreviewCard.visibility = View.VISIBLE
+                            visualPreviewCard.visibility = View.GONE
+
+                            if (::cameraOverlay.isInitialized) {
+                                cameraOverlay.visibility = View.VISIBLE
+                            }
                         }
                         NetoVisionController.State.BACK_CAMERA -> {
                             visualState = NetoVisualState.BackCamera
                             visualPreviewLabel.text = "Back camera"
-                            visualPreviewCard.visibility = View.VISIBLE
+                            visualPreviewCard.visibility = View.GONE
+
+                            if (::cameraOverlay.isInitialized) {
+                                cameraOverlay.visibility = View.VISIBLE
+                            }
                         }
                         NetoVisionController.State.SCREEN -> {
                             visualState = NetoVisualState.Screen
                             visualPreviewLabel.text = "Screen sharing"
                             visualPreviewCard.visibility = View.VISIBLE
+
+                            if (::cameraOverlay.isInitialized) {
+                                cameraOverlay.visibility = View.GONE
+                            }
                         }
                         NetoVisionController.State.OFF -> {
                             visualState = NetoVisualState.None
                             visualPreviewCard.visibility = View.GONE
                             visualPreview.setImageDrawable(null)
+
+                            if (::cameraOverlay.isInitialized) {
+                                cameraOverlay.visibility = View.GONE
+                                cameraOverlayImage.setImageDrawable(null)
+                            }
                         }
                     }
                 }
@@ -694,10 +837,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun stopVisualInput() {
-        if (::visionController.isInitialized) visionController.stop()
+        if (::visionController.isInitialized) {
+            visionController.stop()
+        }
+
         visualState = NetoVisualState.None
         visualPreviewCard.visibility = View.GONE
         visualPreview.setImageDrawable(null)
+
+        if (::cameraOverlay.isInitialized) {
+            cameraOverlay.visibility = View.GONE
+            cameraOverlayImage.setImageDrawable(null)
+        }
     }
 
     // --- Agent Action Execution & Text Input ---
