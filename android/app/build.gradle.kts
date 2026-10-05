@@ -12,8 +12,8 @@ android {
         applicationId = "com.netodaily.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "2.1.0"
+        versionCode = 4
+        versionName = "2.2.0"
 
         val supabaseUrl = System.getenv("SUPABASE_URL")
             ?: project.findProperty("SUPABASE_URL") as String?

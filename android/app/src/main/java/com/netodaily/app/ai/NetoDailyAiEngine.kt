@@ -79,8 +79,9 @@ class NetoDailyAiEngine(
             val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
             val element = json.parseToJsonElement(raw)
             val obj = element as? kotlinx.serialization.json.JsonObject
-            obj?.get("reply")?.toString()?.trim('"')?.replace("\\n", "\n")
-                ?: obj?.get("message")?.toString()?.trim('"')?.replace("\\n", "\n")
+            // Supabase neto-chat function returns { ok: true, message: "..." }
+            obj?.get("message")?.toString()?.trim('"')?.replace("\\n", "\n")
+                ?: obj?.get("reply")?.toString()?.trim('"')?.replace("\\n", "\n")
                 ?: raw
         }.getOrDefault(raw)
     }

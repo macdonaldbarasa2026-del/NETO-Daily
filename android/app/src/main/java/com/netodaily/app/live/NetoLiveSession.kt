@@ -34,7 +34,8 @@ class NetoLiveSession(
     }
 
     companion object {
-        private const val MODEL = "models/gemini-3.8-live"
+        // Current Gemini Live production model (2025)
+        private const val MODEL = "models/gemini-2.0-flash-live-001"
 
         private const val INPUT_MIME =
             "audio/pcm;rate=16000"
@@ -45,7 +46,7 @@ class NetoLiveSession(
         private const val WS_ENDPOINT =
             "wss://generativelanguage.googleapis.com/" +
                 "ws/google.ai.generativelanguage.v1beta." +
-                "GenerativeService.BidiGenerateContentConstrained"
+                "GenerativeService.BidiGenerateContent"
     }
 
     private val tokenClient =

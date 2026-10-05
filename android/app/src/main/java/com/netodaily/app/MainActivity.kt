@@ -121,21 +121,53 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun requestRequiredPhonePermissions() {
-        val permissionsToRequest = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.RECORD_AUDIO)
+        // All permissions NETO Daily needs to act as a full phone agent
+        val allRequired = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE,
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            allRequired.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.CAMERA)
+
+        val missing = allRequired.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.CALL_PHONE)
-        }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.SEND_SMS)
-        }
-        if (permissionsToRequest.isNotEmpty()) {
-            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
+
+        if (missing.isNotEmpty()) {
+            val criticalMissing = missing.any {
+                it in listOf(
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.CALL_PHONE,
+                    Manifest.permission.SEND_SMS,
+                    Manifest.permission.READ_CONTACTS
+                )
+            }
+            if (criticalMissing) {
+                AlertDialog.Builder(this)
+                    .setTitle("NETO needs permissions to be your agent")
+                    .setMessage(
+                        "To call contacts, send messages, control your phone by voice, and use live audio — NETO needs:\n\n" +
+                        "🎙️ Microphone — live voice input\n" +
+                        "📞 Phone — make calls by voice\n" +
+                        "💬 SMS — send messages by voice\n" +
+                        "👤 Contacts — look up names\n" +
+                        "📷 Camera — visual AI\n" +
+                        "🔔 Notifications — agent alerts\n\n" +
+                        "Tap Allow to enable all features."
+                    )
+                    .setPositiveButton("Allow") { _, _ ->
+                        requestPermissionLauncher.launch(missing.toTypedArray())
+                    }
+                    .setNegativeButton("Not now", null)
+                    .show()
+            } else {
+                requestPermissionLauncher.launch(missing.toTypedArray())
+            }
         }
     }
 
