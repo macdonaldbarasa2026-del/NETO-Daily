@@ -182,6 +182,27 @@ class AuthActivity : AppCompatActivity() {
         form.addView(confirmInput, lp(bottom = 18))
         form.addView(primary, lp(height = 54))
         form.addView(switchButton, lp(height = 48))
+
+        val guestButton = MaterialButton(this).apply {
+            text = "Continue as Guest (Instant Access) →"
+            setTextColor(Color.rgb(8, 127, 104))
+            setBackgroundColor(Color.rgb(234, 245, 239))
+            cornerRadius = dp(16)
+            isAllCaps = false
+            textSize = 14f
+            setOnClickListener {
+                val store = com.netodaily.app.data.NetoLocalStore(this@AuthActivity)
+                val enteredName = nameInput.text?.toString()?.trim().orEmpty()
+                if (enteredName.isNotEmpty()) {
+                    store.setUserName(enteredName)
+                }
+                store.saveBoolean("has_entered", true)
+                store.setGuestMode(true)
+                openMain()
+            }
+        }
+        form.addView(guestButton, lp(height = 48, bottom = 8))
+
         form.addView(status, lp())
 
         card.addView(
