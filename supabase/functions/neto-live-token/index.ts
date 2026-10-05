@@ -11,11 +11,7 @@ const corsHeaders = {
 
 // Model names to try in order (newest first).
 // We fall back if a model is not available in the region.
-const LIVE_MODELS = [
-  "models/gemini-live-2.5-flash-preview",
-  "models/gemini-2.0-flash-live-001",
-  "models/gemini-2.0-flash-exp",
-];
+const LIVE_MODEL = "models/gemini-3.8-live";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -52,9 +48,8 @@ Deno.serve(async (req) => {
   const expireTime = new Date(now + 30 * 60 * 1000).toISOString();   // 30-min token
   const newSessionExpireTime = new Date(now + 2 * 60 * 1000).toISOString(); // 2-min new session
 
-  // Try each model in order until one succeeds
-  let lastError: string | null = null;
-  for (const model of LIVE_MODELS) {
+  // Use the current Gemini Live model.
+  const model = LIVE_MODEL;
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/auth_tokens",
       {
@@ -70,7 +65,10 @@ Deno.serve(async (req) => {
           liveConnectConstraints: {
             model,
             config: {
+              sessionResumption: {},
               responseModalities: ["AUDIO"],
+              inputAudioTranscription: {},
+              outputAudioTranscription: {},
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
@@ -97,30 +95,34 @@ Created by Macdonald Barasa.`,
 
     const data = await response.json().catch(() => ({}));
 
-    if (response.ok && data.name) {
-      return Response.json(
-        {
-          ok: true,
-          token: data.name,
-          model,
-          expiresAt: expireTime,
+  if (response.ok && data.name) {
+    return Response.json(
+      {
+        ok: true,
+        token: data.name,
+        model,
+        expiresAt: expireTime,
+      },
+      {
+        headers: {
+          ...corsHeaders,
+          "Cache-Control": "no-store",
         },
-        {
-          headers: {
-            ...corsHeaders,
-            "Cache-Control": "no-store",
-          },
-        },
-      );
-    }
-
-    console.warn(`Model ${model} failed: ${response.status} ${JSON.stringify(data)}`);
-    lastError = data?.error?.message || `HTTP ${response.status}`;
+      },
+    );
   }
 
-  // All models failed
+  console.error(
+    `Gemini Live token provisioning failed: ${response.status} ${JSON.stringify(data)}`
+  );
+
   return Response.json(
-    { ok: false, error: `Could not start NETO Live: ${lastError}` },
+    {
+      ok: false,
+      error:
+        data?.error?.message ||
+        `Gemini Live token provisioning failed (HTTP ${response.status}).`,
+    },
     { status: 502, headers: corsHeaders },
   );
 });
