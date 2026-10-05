@@ -5,6 +5,10 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 
 class NetoLocalStore(context: Context) {
+    private fun cleanText(value: String): String =
+        value.trim().replace(Regex("\\s+"), " ")
+
+
 
     private val prefs = context.getSharedPreferences(
         "neto_daily_store",

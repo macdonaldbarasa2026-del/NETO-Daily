@@ -909,6 +909,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun checkAndExecuteAgentAction(text: String) {
+        val normalizedCaption = text.trim().lowercase()
+        val now = System.currentTimeMillis()
+
+        if (
+            normalizedCaption.isNotBlank() &&
+            normalizedCaption == lastAgentCaption &&
+            now - lastAgentCaptionAt < 5000L
+        ) {
+            return
+        }
+
+        lastAgentCaption = normalizedCaption
+        lastAgentCaptionAt = now
+
+
         val result = phoneAgent.handleAgenticAction(text)
         if (result.handled) {
             presentAgentResult(result)
