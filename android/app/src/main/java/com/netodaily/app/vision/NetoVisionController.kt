@@ -103,7 +103,13 @@ class NetoVisionController(
     }
 
     fun startScreenShare(resultCode: Int, data: Intent) {
+        if (resultCode == 0) {
+            onStateChanged(State.OFF)
+            return
+        }
+
         stopCameraOnly()
+        NetoScreenFrameBus.clear()
 
         val intent = Intent(context, NetoMediaCaptureService::class.java).apply {
             action = NetoMediaCaptureService.ACTION_START
@@ -118,6 +124,8 @@ class NetoVisionController(
     }
 
     fun stopScreenShare() {
+        NetoScreenFrameBus.clear()
+
         context.startService(
             Intent(context, NetoMediaCaptureService::class.java).apply {
                 action = NetoMediaCaptureService.ACTION_STOP

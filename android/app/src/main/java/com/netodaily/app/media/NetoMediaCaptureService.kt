@@ -63,6 +63,18 @@ class NetoMediaCaptureService : Service() {
     private var handler:
         Handler? = null
 
+    @Volatile
+    private var capturing = false
+
+    @Volatile
+    private var stopping = false
+
+    private var lastFrameAt = 0L
+
+    private companion object {
+        const val FRAME_INTERVAL_MS = 250L
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -124,6 +136,10 @@ class NetoMediaCaptureService : Service() {
 
         stopCapture()
 
+        stopping = false
+        capturing = true
+        lastFrameAt = 0L
+
         val notification =
             Notification.Builder(
                 this,
@@ -179,8 +195,10 @@ class NetoMediaCaptureService : Service() {
             object : MediaProjection.Callback() {
 
                 override fun onStop() {
-                    stopCapture()
-                    stopSelf()
+                    if (!stopping) {
+                        stopCapture()
+                        stopSelf()
+                    }
                 }
             },
             null
@@ -237,6 +255,19 @@ class NetoMediaCaptureService : Service() {
         reader!!.setOnImageAvailableListener(
             { source ->
 
+                if (!capturing || stopping) {
+                    return@setOnImageAvailableListener
+                }
+
+                val now = System.currentTimeMillis()
+
+                if (now - lastFrameAt < FRAME_INTERVAL_MS) {
+                    source.acquireLatestImage()?.close()
+                    return@setOnImageAvailableListener
+                }
+
+                lastFrameAt = now
+
                 val image =
                     source.acquireLatestImage()
                         ?: return@setOnImageAvailableListener
@@ -288,9 +319,11 @@ class NetoMediaCaptureService : Service() {
 
                     bitmap.recycle()
 
-                    NetoScreenFrameBus.publish(
-                        output.toByteArray()
-                    )
+                    if (capturing && !stopping) {
+                        NetoScreenFrameBus.publish(
+                            output.toByteArray()
+                        )
+                    }
 
                 } catch (_: Throwable) {
 
@@ -321,6 +354,14 @@ class NetoMediaCaptureService : Service() {
 
     private fun stopCapture() {
 
+        if (stopping) return
+
+        stopping = true
+        capturing = false
+        lastFrameAt = 0L
+
+        NetoScreenFrameBus.clear()
+
         runCatching {
             display?.release()
         }
@@ -333,11 +374,12 @@ class NetoMediaCaptureService : Service() {
 
         reader = null
 
-        runCatching {
-            projection?.stop()
-        }
-
+        val currentProjection = projection
         projection = null
+
+        runCatching {
+            currentProjection?.stop()
+        }
 
         runCatching {
             thread?.quitSafely()
