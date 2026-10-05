@@ -30,7 +30,7 @@ class NetoDailyWorkspace(
 
     private val accent = Color.rgb(46, 106, 69)
     private val bg = Color.rgb(246, 251, 244)
-    private val text = Color.rgb(28, 35, 30)
+    private val textColor = Color.rgb(28, 35, 30)
     private val secondary = Color.rgb(92, 105, 95)
 
     private val today: String
@@ -52,7 +52,7 @@ class NetoDailyWorkspace(
             text = "NETO Daily"
             textSize = 24f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         }
 
         header.addView(
@@ -216,7 +216,7 @@ class NetoDailyWorkspace(
             text = "Gemini Live Studio"
             textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         }
 
         val description = TextView(context).apply {
@@ -272,7 +272,7 @@ class NetoDailyWorkspace(
             text = task.title
             textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         }
 
         if (task.isCompleted) {
@@ -335,7 +335,7 @@ class NetoDailyWorkspace(
             text = habit.name
             textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         }
 
         val streak = TextView(context).apply {
@@ -384,7 +384,7 @@ class NetoDailyWorkspace(
             text = note.title
             textSize = 17f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         }
 
         val body = TextView(context).apply {
@@ -554,7 +554,7 @@ class NetoDailyWorkspace(
             text = titleText
             textSize = 22f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(text)
+            setTextColor(textColor)
         })
 
         col.addView(TextView(context).apply {
