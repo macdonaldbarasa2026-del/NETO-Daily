@@ -1,147 +1,42 @@
 package com.netodaily.app.ai
 
+import android.content.Context
 import com.netodaily.app.BuildConfig
 import com.netodaily.app.Supabase
-import com.netodaily.app.data.DailyHabit
-import com.netodaily.app.data.DailyNote
-import com.netodaily.app.data.DailyTask
+import com.netodaily.app.agent.NetoPhoneAgent
 import com.netodaily.app.data.NetoLocalStore
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
-import java.util.UUID
 
-class NetoDailyAiEngine(private val store: NetoLocalStore) {
+class NetoDailyAiEngine(
+    private val context: Context,
+    private val store: NetoLocalStore
+) {
+
+    private val phoneAgent = NetoPhoneAgent(context, store)
 
     suspend fun processUserMessage(rawText: String): String {
         val query = rawText.trim()
-        if (query.isBlank()) return "I'm here! What would you like to plan or work through today?"
+        if (query.isBlank()) return "I'm listening. Ask me anything or tell me to call, open apps, set alarms, or plan your day."
 
-        val lower = query.lowercase(Locale.ROOT)
-
-        // 1. Check for quick local action commands
-        handleLocalCommands(lower, query)?.let { directResponse ->
-            return directResponse
+        // 1. Check if user wants a phone agent action (Call, SMS, App, Alarm, Torch, Search, Tasks)
+        val agentResult = phoneAgent.handleAgenticAction(query)
+        if (agentResult.handled) {
+            return agentResult.feedback
         }
 
-        // 2. Try Supabase cloud Gemini endpoint if available
+        // 2. Try Supabase cloud Gemini endpoint if online
         val cloudReply = tryCloudReply(query)
         if (cloudReply != null && cloudReply.isNotBlank()) {
             return cloudReply
         }
 
-        // 3. Fallback to resilient on-device smart assistant
-        return generateOfflineSmartReply(query, lower)
-    }
-
-    private fun handleLocalCommands(lower: String, query: String): String? {
-        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-
-        // Add task command
-        if (lower.startsWith("add task") || lower.startsWith("new task") || lower.startsWith("schedule ") || lower.startsWith("remind me to ")) {
-            val title = query
-                .replaceFirst(Regex("^(add task:?|new task:?|schedule:?|remind me to)\\s*", RegexOption.IGNORE_CASE), "")
-                .trim()
-            if (title.isNotEmpty()) {
-                val newTask = DailyTask(
-                    id = UUID.randomUUID().toString(),
-                    title = title,
-                    timeSlot = extractTime(title) ?: "Anytime",
-                    category = categorizeTask(title),
-                    priority = if (lower.contains("urgent") || lower.contains("important")) "High" else "Normal",
-                    isCompleted = false,
-                    dateStr = todayStr
-                )
-                store.addTask(newTask)
-                return "Got it! Added \"${newTask.title}\" to your daily schedule for today. 🎯\nCategory: ${newTask.category} · Time: ${newTask.timeSlot}"
-            }
-        }
-
-        // Add habit command
-        if (lower.startsWith("add habit") || lower.startsWith("new habit") || lower.startsWith("track habit")) {
-            val name = query
-                .replaceFirst(Regex("^(add habit:?|new habit:?|track habit:?)\\s*", RegexOption.IGNORE_CASE), "")
-                .trim()
-            if (name.isNotEmpty()) {
-                val icon = when {
-                    lower.contains("water") || lower.contains("drink") -> "💧"
-                    lower.contains("read") || lower.contains("book") -> "📚"
-                    lower.contains("run") || lower.contains("walk") || lower.contains("gym") || lower.contains("workout") -> "🏃"
-                    lower.contains("meditat") || lower.contains("mind") || lower.contains("breath") -> "🧘"
-                    lower.contains("sleep") || lower.contains("bed") -> "🌙"
-                    else -> "⚡"
-                }
-                val newHabit = DailyHabit(
-                    id = UUID.randomUUID().toString(),
-                    name = name,
-                    icon = icon,
-                    category = "Routine",
-                    streak = 1,
-                    completedToday = false
-                )
-                store.addHabit(newHabit)
-                return "New habit tracked: $icon \"${newHabit.name}\"! Consistency starts today. 🔥"
-            }
-        }
-
-        // Daily briefing / Schedule request
-        if (lower.contains("briefing") || lower.contains("schedule") || lower.contains("what's my plan") || lower.contains("plan today") || lower.contains("my agenda")) {
-            val tasks = store.getTasks()
-            val habits = store.getHabits()
-            val completedTasks = tasks.count { it.isCompleted }
-            val completedHabits = habits.count { it.completedToday }
-
-            val sb = StringBuilder()
-            val timeGreeting = getTimeGreeting()
-            val userName = store.getUserName().ifBlank { "there" }
-            sb.append("$timeGreeting, $userName! Here is your NETO Daily Briefing ☀️\n\n")
-
-            sb.append("📋 Today's Tasks ($completedTasks/${tasks.size} done):\n")
-            if (tasks.isEmpty()) {
-                sb.append("• No tasks scheduled yet today. What's your priority?\n")
-            } else {
-                tasks.take(5).forEach { t ->
-                    val status = if (t.isCompleted) "✓ [Done]" else "○ [ ]"
-                    sb.append("$status ${t.title} (${t.timeSlot})\n")
-                }
-                if (tasks.size > 5) {
-                    sb.append("...and ${tasks.size - 5} more in your schedule.\n")
-                }
-            }
-
-            sb.append("\n🔥 Daily Habits ($completedHabits/${habits.size} active):\n")
-            habits.take(4).forEach { h ->
-                val check = if (h.completedToday) "✅" else "⚪"
-                sb.append("$check ${h.icon} ${h.name} (${h.streak} day streak)\n")
-            }
-
-            sb.append("\n💡 Daily Focus: Choose 1 primary goal and conquer it early today!")
-            return sb.toString()
-        }
-
-        // Add note / reflection
-        if (lower.startsWith("note:") || lower.startsWith("save note") || lower.startsWith("reflection:")) {
-            val body = query
-                .replaceFirst(Regex("^(note:|save note:?|reflection:?)\\s*", RegexOption.IGNORE_CASE), "")
-                .trim()
-            if (body.isNotEmpty()) {
-                val newNote = DailyNote(
-                    id = UUID.randomUUID().toString(),
-                    title = "Reflection · " + SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date()),
-                    content = body,
-                    tag = "Reflection"
-                )
-                store.addNote(newNote)
-                return "Saved to your Daily Reflections! 📝\n\"$body\""
-            }
-        }
-
-        return null
+        // 3. Fallback to intelligent on-device smart assistant
+        return generateOfflineSmartReply(query)
     }
 
     private suspend fun tryCloudReply(text: String): String? {
@@ -190,54 +85,25 @@ class NetoDailyAiEngine(private val store: NetoLocalStore) {
         }.getOrDefault(raw)
     }
 
-    private fun generateOfflineSmartReply(query: String, lower: String): String {
+    private fun generateOfflineSmartReply(query: String): String {
+        val lower = query.lowercase(Locale.ROOT)
         val userName = store.getUserName().ifBlank { "friend" }
 
         return when {
             lower.contains("hello") || lower.contains("hi") || lower.contains("hey") ->
-                "Hello $userName! 👋 How can I help power your day? We can plan your schedule, check off habits, or work through any ideas."
+                "Hello $userName! 👋 I am your Gemini-powered agent. You can ask me questions, or tell me to call contacts, open apps, set alarms, control flashlight, or organize your day."
 
             lower.contains("who are you") || lower.contains("what can you do") ->
-                "I am NETO, your 2026 daily assistant and routine co-pilot. I help you plan your daily schedule, stay consistent with habits, take quick reflection notes, and guide your daily productivity through voice, vision, and chat."
+                "I am NETO, your personal cloud agent powered by Gemini. I can automate phone actions like calling contacts, launching apps (YouTube, WhatsApp, Camera), setting timers, searching the web, and guiding your daily habits and schedule."
 
-            lower.contains("motivat") || lower.contains("inspire") || lower.contains("quote") ->
-                "\"Action is the foundational key to all success.\" — Pablo Picasso\n\nTake 5 minutes right now to tackle the most important item on your schedule. Momentum builds once you begin!"
+            lower.contains("motivat") || lower.contains("inspire") ->
+                "\"Your only limit is you.\" Take action on your #1 goal today and build unshakeable momentum!"
 
-            lower.contains("focus") || lower.contains("pomodoro") || lower.contains("deep work") ->
-                "Let's get into a Deep Work state! 🧠\n1. Pick 1 task from your agenda.\n2. Set a 25-minute timer.\n3. Put away distractions.\n4. You've got this — starting now!"
-
-            lower.contains("habit") ->
-                "Small habits compounded daily lead to extraordinary results. You can view your current habit streaks in the Habits tab, or tell me 'Add habit <name>' anytime!"
-
-            lower.contains("plan") || lower.contains("organize") ->
-                "To organize your day effectively:\n• Define 1-3 Non-Negotiable priorities.\n• Time-block your morning for high-leverage work.\n• Protect time for movement and rest.\nWhat is the #1 thing you want to accomplish today?"
+            lower.contains("focus") || lower.contains("deep work") ->
+                "Let's initiate Deep Focus mode! 🧠 Pick your primary task, silence distractions, and let's get it done."
 
             else ->
-                "Got it! I've noted that for your day. You can ask me to schedule tasks ('add task <name>'), track new habits ('add habit <name>'), or ask for advice and planning anytime. Let's make today count! ⚡"
-        }
-    }
-
-    private fun extractTime(text: String): String? {
-        val regex = Regex("\\b(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm|AM|PM))\\b")
-        return regex.find(text)?.value
-    }
-
-    private fun categorizeTask(text: String): String {
-        val lower = text.lowercase(Locale.ROOT)
-        return when {
-            lower.contains("work") || lower.contains("code") || lower.contains("meeting") || lower.contains("call") || lower.contains("email") -> "Work"
-            lower.contains("health") || lower.contains("gym") || lower.contains("run") || lower.contains("water") || lower.contains("doctor") -> "Wellness"
-            lower.contains("study") || lower.contains("read") || lower.contains("learn") -> "Focus"
-            else -> "Personal"
-        }
-    }
-
-    private fun getTimeGreeting(): String {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        return when (hour) {
-            in 5..11 -> "Good morning"
-            in 12..16 -> "Good afternoon"
-            else -> "Good evening"
+                "I've got you, $userName. I can help answer that, launch an app, make a call, set an alarm, or search the web. What would you like to do next?"
         }
     }
 }

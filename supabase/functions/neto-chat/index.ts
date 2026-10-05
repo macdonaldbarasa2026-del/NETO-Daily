@@ -65,9 +65,10 @@ export default {
       );
     }
 
-    const userId = ctx.userClaims?.sub;
+    const userId = ctx.userClaims?.sub || "guest";
+    const apiKey = req.headers.get("apikey");
 
-    if (!userId) {
+    if (!userId && !apiKey) {
       return json(
         { ok: false, error: "unauthenticated" },
         401,

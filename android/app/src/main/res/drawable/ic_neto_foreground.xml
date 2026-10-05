@@ -1,14 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- Gemini-style glowing 4-point radiant spark -->
+    <path
+        android:fillColor="#00E5A3"
+        android:pathData="M54,22 C54,38 40,54 22,54 C40,54 54,70 54,86 C54,70 68,54 86,54 C68,54 54,38 54,22 Z" />
+
+    <!-- Inner brilliant core spark -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M30,27 L39,27 L72,69 L72,27 L81,27 L81,81 L72,81 L39,39 L39,81 L30,81 Z"/>
+        android:pathData="M54,34 C54,44 45,54 34,54 C45,54 54,64 54,74 C54,64 63,54 74,54 C63,54 54,44 54,34 Z" />
 
-    <circle
-        android:fillColor="#087F68"
-        android:pathData="M75,75 A8,8 0,1 0,75,91 A8,8 0,1 0,75,75"/>
+    <!-- Center N monogram cutout in emerald -->
+    <path
+        android:fillColor="#0A2C23"
+        android:pathData="M48,45 L52,45 L58,57 L58,45 L62,45 L62,63 L58,63 L52,51 L52,63 L48,63 Z" />
 </vector>

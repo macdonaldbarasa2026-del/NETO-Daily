@@ -2,7 +2,7 @@
 <resources>
 
     <style name="Theme.NETODaily"
-        parent="Theme.Material3.Light.NoActionBar">
+        parent="Theme.Material3.Dark.NoActionBar">
 
         <item name="android:fontFamily">sans</item>
 
@@ -11,8 +11,8 @@
         <item name="android:statusBarColor">@color/neto_bg</item>
         <item name="android:navigationBarColor">@color/neto_bg</item>
 
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
 
         <item name="colorPrimary">@color/neto_accent</item>
         <item name="colorSecondary">@color/neto_accent</item>

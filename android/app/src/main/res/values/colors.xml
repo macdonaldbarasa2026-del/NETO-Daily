@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <color name="neto_bg">#F6FBF4</color>
-    <color name="neto_accent">#087F68</color>
-
+    <color name="neto_bg">#09110F</color>
+    <color name="neto_accent">#00E5A3</color>
+    <color name="neto_surface">#121F1B</color>
 </resources>

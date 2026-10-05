@@ -1,12 +1,13 @@
 package com.netodaily.app.ui
 
+import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Typeface
+import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
+import android.view.animation.LinearInterpolator
 import kotlin.math.min
+import kotlin.math.sin
 
 class NetoOrbView @JvmOverloads constructor(
     context: Context,
@@ -20,34 +21,43 @@ class NetoOrbView @JvmOverloads constructor(
         SPEAKING
     }
 
-    private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val auraPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var state = State.IDLE
     private var audioLevel = 0f
+    private var pulsePhase = 0f
+
+    private var animator: ValueAnimator? = null
 
     init {
         isClickable = true
-        contentDescription = "NETO voice assistant"
+        contentDescription = "NETO Gemini Live Assistant"
+
+        animator = ValueAnimator.ofFloat(0f, (2 * Math.PI).toFloat()).apply {
+            duration = 3200
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener {
+                pulsePhase = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     fun setState(value: State) {
         state = value
-
         if (value == State.IDLE) {
             audioLevel = 0f
         }
-
         invalidate()
     }
 
     fun setAudioLevel(value: Float) {
-        audioLevel =
-            value
-                .coerceIn(0f, 1f)
-
+        audioLevel = value.coerceIn(0f, 1f)
         invalidate()
     }
 
@@ -60,132 +70,64 @@ class NetoOrbView @JvmOverloads constructor(
         val cy = height / 2f
         val size = min(width, height).toFloat()
 
-        val level =
-            if (
-                state == State.LISTENING ||
-                state == State.SPEAKING
-            ) {
-                audioLevel
-            } else {
-                0f
-            }
+        val pulse = sin(pulsePhase) * 0.04f
+        val level = if (state == State.LISTENING || state == State.SPEAKING) audioLevel else 0f
 
-        val outerRadius =
-            size * (
-                0.38f +
-                    level * 0.035f
-            )
+        val baseRadius = size * (0.32f + pulse + level * 0.10f)
 
-        val coreRadius =
-            size * (
-                0.28f +
-                    level * 0.018f
-            )
+        // 1. Exterior Glowing Aura (Gemini Radial Gradient)
+        val outerColors = when (state) {
+            State.IDLE -> intArrayOf(0x55087F68, 0x22054D3F, 0x000A1210)
+            State.LISTENING -> intArrayOf(0x8800E5A3, 0x33087F68, 0x000A1210)
+            State.THINKING -> intArrayOf(0x773B82F6, 0x331E3A8A, 0x000A1210)
+            State.SPEAKING -> intArrayOf(0x9900F2FE, 0x444FACFE, 0x000A1210)
+        }
+        val auraRadius = baseRadius * 1.6f
+        auraPaint.shader = RadialGradient(cx, cy, auraRadius, outerColors, floatArrayOf(0.1f, 0.65f, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, auraRadius, auraPaint)
 
-        val accent =
-            when (state) {
-                State.IDLE ->
-                    0xFF6B705C.toInt()
+        // 2. Middle Fluid Wave Ring
+        wavePaint.style = Paint.Style.STROKE
+        wavePaint.strokeWidth = size * (0.015f + level * 0.02f)
+        val waveColor = when (state) {
+            State.IDLE -> 0x6600E5A3.toInt()
+            State.LISTENING -> 0xCC00E5A3.toInt()
+            State.THINKING -> 0xAA60A5FA.toInt()
+            State.SPEAKING -> 0xEE38BDF8.toInt()
+        }
+        wavePaint.color = waveColor
+        canvas.drawCircle(cx, cy, baseRadius * 1.15f, wavePaint)
 
-                State.LISTENING ->
-                    0xFF5C8D78.toInt()
+        // 3. Inner Luminous Core
+        val coreColors = when (state) {
+            State.IDLE -> intArrayOf(0xFF1B6B58.toInt(), 0xFF0B332A.toInt())
+            State.LISTENING -> intArrayOf(0xFF00E5A3.toInt(), 0xFF087F68.toInt())
+            State.THINKING -> intArrayOf(0xFF93C5FD.toInt(), 0xFF2563EB.toInt())
+            State.SPEAKING -> intArrayOf(0xFF67E8F9.toInt(), 0xFF0284C7.toInt())
+        }
+        corePaint.shader = RadialGradient(cx, cy, baseRadius, coreColors, null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, baseRadius, corePaint)
 
-                State.THINKING ->
-                    0xFF697A72.toInt()
+        // 4. Center Gemini Spark Shape
+        val sparkRadius = baseRadius * (0.36f + level * 0.08f)
+        sparkPaint.color = Color.WHITE
+        sparkPaint.alpha = 240
+        sparkPaint.style = Paint.Style.FILL
 
-                State.SPEAKING ->
-                    0xFF2E6A45.toInt()
-            }
+        val sparkPath = Path().apply {
+            moveTo(cx, cy - sparkRadius)
+            quadTo(cx, cy, cx + sparkRadius, cy)
+            quadTo(cx, cy, cx, cy + sparkRadius)
+            quadTo(cx, cy, cx - sparkRadius, cy)
+            quadTo(cx, cy, cx, cy - sparkRadius)
+            close()
+        }
+        canvas.drawPath(sparkPath, sparkPaint)
+    }
 
-        outerPaint.style = Paint.Style.FILL
-        outerPaint.color = 0x146B705C
-
-        canvas.drawCircle(
-            cx,
-            cy,
-            outerRadius,
-            outerPaint
-        )
-
-        ringPaint.style = Paint.Style.STROKE
-        ringPaint.strokeWidth =
-            size * (
-                0.012f +
-                    level * 0.006f
-            )
-
-        ringPaint.color = accent
-        ringPaint.alpha =
-            (
-                90 +
-                    level * 100
-            ).toInt().coerceIn(0, 190)
-
-        canvas.drawCircle(
-            cx,
-            cy,
-            outerRadius * 0.88f,
-            ringPaint
-        )
-
-        corePaint.style = Paint.Style.FILL
-        corePaint.color =
-            when (state) {
-                State.IDLE ->
-                    0xFFE7EEEA.toInt()
-
-                State.LISTENING ->
-                    0xFFDCEBE3.toInt()
-
-                State.THINKING ->
-                    0xFFE2E9E6.toInt()
-
-                State.SPEAKING ->
-                    0xFFD7E9DF.toInt()
-            }
-
-        corePaint.alpha = 255
-
-        canvas.drawCircle(
-            cx,
-            cy,
-            coreRadius,
-            corePaint
-        )
-
-        corePaint.color = accent
-        corePaint.alpha = 235
-
-        val centerRadius =
-            coreRadius *
-                (
-                    0.58f +
-                        level * 0.08f
-                )
-
-        canvas.drawCircle(
-            cx,
-            cy,
-            centerRadius,
-            corePaint
-        )
-
-        textPaint.color = 0xFF16372A.toInt()
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.DEFAULT_BOLD
-        textPaint.textSize = size * 0.055f
-        textPaint.alpha = 230
-
-        canvas.drawText(
-            when (state) {
-                State.IDLE -> "NETO"
-                State.LISTENING -> "LISTEN"
-                State.THINKING -> "..."
-                State.SPEAKING -> "NETO"
-            },
-            cx,
-            cy + size * 0.02f,
-            textPaint
-        )
+    override fun onDetachedFromWindow() {
+        animator?.cancel()
+        animator = null
+        super.onDetachedFromWindow()
     }
 }

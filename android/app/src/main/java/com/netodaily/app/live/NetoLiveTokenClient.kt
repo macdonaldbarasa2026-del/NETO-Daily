@@ -17,11 +17,7 @@ class NetoLiveTokenClient {
         var connection: HttpURLConnection? = null
 
         return try {
-            val session =
-                Supabase.client.auth.currentSessionOrNull()
-                    ?: return NetoLiveTokenResponse(
-                        error = "Please sign in to use NETO voice."
-                    )
+            val session = Supabase.client.auth.currentSessionOrNull()
 
             val url =
                 "${BuildConfig.SUPABASE_URL}/functions/v1/neto-live-token"
@@ -35,10 +31,12 @@ class NetoLiveTokenClient {
             connection.doInput = true
             connection.doOutput = false
 
-            connection.setRequestProperty(
-                "Authorization",
-                "Bearer ${session.accessToken}"
-            )
+            if (session != null) {
+                connection.setRequestProperty(
+                    "Authorization",
+                    "Bearer ${session.accessToken}"
+                )
+            }
 
             connection.setRequestProperty(
                 "apikey",

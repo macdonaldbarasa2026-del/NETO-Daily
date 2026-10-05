@@ -26,8 +26,9 @@ export default {
     }
 
     const userId = ctx.userClaims?.sub;
+    const apiKey = req.headers.get("apikey");
 
-    if (!userId) {
+    if (!userId && !apiKey) {
       return Response.json(
         { error: "Authentication required" },
         {
