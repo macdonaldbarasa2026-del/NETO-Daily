@@ -78,9 +78,9 @@ class NetoOrbView @JvmOverloads constructor(
         // 1. Exterior Glowing Aura (Gemini Radial Gradient)
         val outerColors = when (state) {
             State.IDLE -> intArrayOf(0x55087F68, 0x22054D3F, 0x000A1210)
-            State.LISTENING -> intArrayOf(0x8800E5A3, 0x33087F68, 0x000A1210)
+            State.LISTENING -> intArrayOf(0x8800E5A3.toInt(), 0x33087F68, 0x000A1210)
             State.THINKING -> intArrayOf(0x773B82F6, 0x331E3A8A, 0x000A1210)
-            State.SPEAKING -> intArrayOf(0x9900F2FE, 0x444FACFE, 0x000A1210)
+            State.SPEAKING -> intArrayOf(0x9900F2FE.toInt(), 0x444FACFE, 0x000A1210)
         }
         val auraRadius = baseRadius * 1.6f
         auraPaint.shader = RadialGradient(cx, cy, auraRadius, outerColors, floatArrayOf(0.1f, 0.65f, 1f), Shader.TileMode.CLAMP)
