@@ -22,7 +22,7 @@ class NetoLiveFrameRouter(
 ) {
 
     companion object {
-        private const val FRAME_INTERVAL_MS = 1_000L
+        private const val FRAME_INTERVAL_MS = 250L
         private const val HASH_SAMPLE_SIZE = 4096
     }
 
