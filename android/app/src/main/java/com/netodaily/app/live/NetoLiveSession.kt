@@ -47,6 +47,9 @@ class NetoLiveSession(
             "wss://generativelanguage.googleapis.com/" +
                 "ws/google.ai.generativelanguage.v1beta." +
                 "GenerativeService.BidiGenerateContentConstrained"
+
+        private const val MAX_RECONNECT_ATTEMPTS = 3
+        private const val RECONNECT_DELAY_MS = 1_000L
     }
 
     private val tokenClient =
