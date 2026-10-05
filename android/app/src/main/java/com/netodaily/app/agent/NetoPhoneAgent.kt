@@ -9,6 +9,7 @@ import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.ContactsContract
 import com.netodaily.app.data.DailyHabit
+import com.netodaily.app.data.DailyNote
 import com.netodaily.app.data.DailyTask
 import com.netodaily.app.data.NetoLocalStore
 import java.text.SimpleDateFormat
@@ -27,10 +28,25 @@ class NetoPhoneAgent(
     )
 
     private var pendingAction: (() -> AgentResult)? = null
+    private var pendingActionCreatedAt: Long = 0L
+
+    private fun pendingActionExpired(): Boolean {
+        return pendingAction != null &&
+            System.currentTimeMillis() - pendingActionCreatedAt > 60_000L
+    }
 
     fun handleAgenticAction(query: String): AgentResult {
         val text = query.trim()
         val lower = text.lowercase(Locale.ROOT)
+
+        // Voice confirmation / cancellation.
+        if (lower in setOf("yes", "yes please", "confirm", "confirmed", "do it", "send it", "go ahead")) {
+            return confirmPendingAction()
+        }
+
+        if (lower in setOf("no", "cancel", "cancel it", "never mind", "never mind cancel", "stop")) {
+            return cancelPendingAction()
+        }
 
         // 1. Phone Call
         if (lower.startsWith("call ") || lower.startsWith("dial ") || lower.startsWith("phone ")) {
@@ -78,7 +94,28 @@ class NetoPhoneAgent(
             return executeWebSearch(searchTarget)
         }
 
-        // 8. Daily Agenda & Routine Commands
+        // 8. Daily Notes
+        if (
+            lower.startsWith("add note ") ||
+            lower.startsWith("note ")
+        ) {
+            val noteText = text.replaceFirst(
+                Regex("^(add note|note)\\s*", RegexOption.IGNORE_CASE),
+                ""
+            ).trim()
+
+            return executeAddNote(noteText)
+        }
+
+        if (
+            lower.contains("show my notes") ||
+            lower.contains("read my notes") ||
+            lower.contains("what are my notes")
+        ) {
+            return executeReadNotes()
+        }
+
+        // 9. Daily Agenda & Routine Commands
         if (lower.startsWith("add task ") || lower.startsWith("schedule ")) {
             val taskTitle = text.replaceFirst(Regex("^(add task:?|schedule:?)\\s+", RegexOption.IGNORE_CASE), "").trim()
             return executeAddTask(taskTitle)
@@ -107,6 +144,7 @@ class NetoPhoneAgent(
                     )
             }
 
+            pendingActionCreatedAt = System.currentTimeMillis()
             pendingAction = {
                 try {
                     val dialIntent = Intent(Intent.ACTION_DIAL).apply {
@@ -203,6 +241,7 @@ class NetoPhoneAgent(
                 )
             }
 
+            pendingActionCreatedAt = System.currentTimeMillis()
             pendingAction = {
                 try {
                     val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
@@ -239,12 +278,23 @@ class NetoPhoneAgent(
     }
 
     fun confirmPendingAction(): AgentResult {
+        if (pendingActionExpired()) {
+            pendingAction = null
+            pendingActionCreatedAt = 0L
+            return AgentResult(
+                handled = true,
+                feedback = "That confirmation expired. Please ask again.",
+                actionType = "EXPIRED"
+            )
+        }
+
         val action = pendingAction ?: return AgentResult(
             handled = false,
             feedback = ""
         )
 
         pendingAction = null
+        pendingActionCreatedAt = 0L
         return runCatching {
             action()
         }.getOrElse {
@@ -258,6 +308,7 @@ class NetoPhoneAgent(
 
     fun cancelPendingAction(): AgentResult {
         pendingAction = null
+        pendingActionCreatedAt = 0L
         return AgentResult(
             handled = true,
             feedback = "Action cancelled.",

@@ -33,7 +33,15 @@ class NetoLocalStore(context: Context) {
 
     fun addTask(task: DailyTask) {
         val current = getTasks()
-        saveTasks(listOf(task) + current)
+
+        val duplicate = current.any {
+            it.title.trim().equals(task.title.trim(), ignoreCase = true) &&
+            it.dateStr == task.dateStr
+        }
+
+        if (!duplicate) {
+            saveTasks(listOf(task) + current)
+        }
     }
 
     fun toggleTask(id: String): DailyTask? {
@@ -70,7 +78,14 @@ class NetoLocalStore(context: Context) {
 
     fun addHabit(habit: DailyHabit) {
         val current = getHabits()
-        saveHabits(current + habit)
+
+        val duplicate = current.any {
+            it.name.trim().equals(habit.name.trim(), ignoreCase = true)
+        }
+
+        if (!duplicate) {
+            saveHabits(current + habit)
+        }
     }
 
     fun toggleHabit(id: String, todayStr: String): DailyHabit? {
@@ -113,7 +128,15 @@ class NetoLocalStore(context: Context) {
 
     fun addNote(note: DailyNote) {
         val current = getNotes()
-        saveNotes(listOf(note) + current)
+
+        val duplicate = current.any {
+            it.title.trim().equals(note.title.trim(), ignoreCase = true) &&
+            it.content.trim() == note.content.trim()
+        }
+
+        if (!duplicate) {
+            saveNotes(listOf(note) + current)
+        }
     }
 
     fun deleteNote(id: String) {

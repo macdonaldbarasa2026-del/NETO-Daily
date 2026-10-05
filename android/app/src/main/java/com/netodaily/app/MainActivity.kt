@@ -95,6 +95,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var conversation = NetoConversation(id = UUID.randomUUID().toString())
     private var busy = false
 
+    // Prevent repeated Gemini Live caption events from executing the same
+    // phone action more than once.
+    private var lastAgentCaption: String = ""
+    private var lastAgentCaptionAt: Long = 0L
+
     // Colors
     private val colorBg = Color.rgb(9, 17, 15)
     private val colorSurface = Color.rgb(18, 31, 27)
@@ -710,7 +715,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                         // Check if the caption triggers an agentic phone action!
                         if (speaker.equals("You", ignoreCase = true) || speaker.isBlank()) {
-                            checkAndExecuteAgentAction(text)
+                            val now = System.currentTimeMillis()
+                            val normalized = text.trim()
+
+                            if (
+                                normalized.isNotEmpty() &&
+                                (
+                                    normalized != lastAgentCaption ||
+                                    now - lastAgentCaptionAt > 5000L
+                                )
+                            ) {
+                                lastAgentCaption = normalized
+                                lastAgentCaptionAt = now
+                                checkAndExecuteAgentAction(normalized)
+                            }
                         }
                     }
                 }
