@@ -200,38 +200,56 @@ class NetoCameraController(
     }
 
     private fun yuvToJpeg(image: Image): ByteArray {
+        val width = image.width
+        val height = image.height
         val planes = image.planes
 
-        val y = planes[0].buffer
-        val u = planes[1].buffer
-        val v = planes[2].buffer
+        val nv21 = ByteArray(width * height + width * height / 2)
 
-        val ySize = y.remaining()
-        val uSize = u.remaining()
-        val vSize = v.remaining()
+        var outputIndex = 0
 
-        val nv21 = ByteArray(ySize + uSize + vSize)
+        // Y plane.
+        val yPlane = planes[0]
+        val yBuffer = yPlane.buffer.duplicate()
+        val yRowStride = yPlane.rowStride
+        val yPixelStride = yPlane.pixelStride
 
-        y.get(nv21, 0, ySize)
+        for (row in 0 until height) {
+            val rowStart = row * yRowStride
 
-        val chromaWidth = image.width / 2
-        val chromaHeight = image.height / 2
+            for (col in 0 until width) {
+                val index = rowStart + col * yPixelStride
+                if (index < yBuffer.limit()) {
+                    nv21[outputIndex++] = yBuffer.get(index)
+                }
+            }
+        }
 
-        var outputIndex = ySize
+        // Interleaved VU chroma for NV21.
+        val uPlane = planes[1]
+        val vPlane = planes[2]
+        val uBuffer = uPlane.buffer.duplicate()
+        val vBuffer = vPlane.buffer.duplicate()
+
+        val chromaHeight = height / 2
+        val chromaWidth = width / 2
 
         for (row in 0 until chromaHeight) {
             for (col in 0 until chromaWidth) {
-                val vIndex =
-                    row * planes[2].rowStride +
-                        col * planes[2].pixelStride
-
                 val uIndex =
-                    row * planes[1].rowStride +
-                        col * planes[1].pixelStride
+                    row * uPlane.rowStride +
+                        col * uPlane.pixelStride
 
-                if (vIndex < vSize && uIndex < uSize) {
-                    nv21[outputIndex++] = v.get(vIndex)
-                    nv21[outputIndex++] = u.get(uIndex)
+                val vIndex =
+                    row * vPlane.rowStride +
+                        col * vPlane.pixelStride
+
+                if (
+                    uIndex < uBuffer.limit() &&
+                    vIndex < vBuffer.limit()
+                ) {
+                    nv21[outputIndex++] = vBuffer.get(vIndex)
+                    nv21[outputIndex++] = uBuffer.get(uIndex)
                 }
             }
         }
@@ -239,8 +257,8 @@ class NetoCameraController(
         val yuvImage = android.graphics.YuvImage(
             nv21,
             ImageFormat.NV21,
-            image.width,
-            image.height,
+            width,
+            height,
             null
         )
 
@@ -249,8 +267,8 @@ class NetoCameraController(
                 android.graphics.Rect(
                     0,
                     0,
-                    image.width,
-                    image.height
+                    width,
+                    height
                 ),
                 JPEG_QUALITY,
                 output

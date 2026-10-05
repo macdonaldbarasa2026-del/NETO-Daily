@@ -302,7 +302,7 @@ class NetoMediaCaptureService : Service() {
                             rowPadding /
                             pixelStride
 
-                    val bitmap =
+                    val paddedBitmap =
                         Bitmap.createBitmap(
                             bitmapWidth,
                             height,
@@ -311,9 +311,24 @@ class NetoMediaCaptureService : Service() {
 
                     buffer.rewind()
 
-                    bitmap.copyPixelsFromBuffer(
+                    paddedBitmap.copyPixelsFromBuffer(
                         buffer
                     )
+
+                    val bitmap =
+                        if (bitmapWidth != width) {
+                            Bitmap.createBitmap(
+                                paddedBitmap,
+                                0,
+                                0,
+                                width,
+                                height
+                            ).also {
+                                paddedBitmap.recycle()
+                            }
+                        } else {
+                            paddedBitmap
+                        }
 
                     val output =
                         ByteArrayOutputStream()

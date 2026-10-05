@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference
  * The router:
  * - keeps only the newest frame
  * - never builds a frame queue
- * - limits delivery to 1 frame/second
+ * - limits delivery to 4 frames/second
  * - drops identical frames
  * - avoids blocking camera/screen capture threads
  */
