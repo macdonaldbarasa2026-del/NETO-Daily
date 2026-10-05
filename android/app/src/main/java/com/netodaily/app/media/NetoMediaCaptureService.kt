@@ -46,6 +46,8 @@ class NetoMediaCaptureService : Service() {
 
         private const val MAX_HEIGHT =
             540
+
+        private const val FRAME_INTERVAL_MS = 250L
     }
 
     private var projection:
@@ -71,9 +73,6 @@ class NetoMediaCaptureService : Service() {
 
     private var lastFrameAt = 0L
 
-    private companion object {
-        const val FRAME_INTERVAL_MS = 250L
-    }
 
     override fun onCreate() {
         super.onCreate()
