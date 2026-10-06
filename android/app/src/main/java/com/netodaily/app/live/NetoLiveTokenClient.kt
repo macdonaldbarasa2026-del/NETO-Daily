@@ -80,33 +80,38 @@ class NetoLiveTokenClient {
                                 401 -> "NETO authentication expired. Please sign in again."
                                 403 -> "NETO Live access was denied."
                                 404 -> "NETO Live endpoint was not found."
+                                429 -> "Voice service is busy. Please wait a moment and try again."
                                 500 -> "NETO Live server configuration failed."
                                 502 -> "Gemini Live could not be started."
-                                else -> "NETO Live request failed (HTTP $code)."
+                                else -> "NETO couldn't connect to the voice service. Please try again."
                             }
                 )
             }
 
             val response =
-                json.decodeFromString<NetoLiveTokenResponse>(body)
+                runCatching {
+                    json.decodeFromString<NetoLiveTokenResponse>(body)
+                }.getOrNull()
 
-            if (!response.ok || response.token.isNullOrBlank()) {
+            if (response == null || !response.ok || response.token.isNullOrBlank()) {
                 NetoLiveTokenResponse(
                     error =
-                        response.error
+                        response?.error
                             ?.takeIf { it.isNotBlank() }
-                            ?: "NETO Live returned an invalid token."
+                            ?: "NETO couldn't connect to the voice service. Please try again."
                 )
             } else {
                 response
             }
 
         } catch (t: Throwable) {
-            NetoLiveTokenResponse(
-                error =
-                    t.message?.takeIf { it.isNotBlank() }
-                        ?: "NETO could not connect to Live voice."
-            )
+            val friendlyMsg = when {
+                t is java.net.UnknownHostException -> "No internet connection. Please check your network."
+                t is java.net.SocketTimeoutException -> "Voice connection timed out. Please try again."
+                else -> t.message?.takeIf { it.isNotBlank() }
+                    ?: "NETO couldn't connect to the voice service. Please try again."
+            }
+            NetoLiveTokenResponse(error = friendlyMsg)
         } finally {
             connection?.disconnect()
         }

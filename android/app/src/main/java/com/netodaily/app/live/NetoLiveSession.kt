@@ -18,6 +18,17 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
+/**
+ * Manages the real-time Gemini Live WebSocket session for NETO Daily.
+ *
+ * Supported features:
+ * - PCM16 16 kHz mono microphone capture
+ * - PCM16 24 kHz mono assistant audio playback through phone speaker
+ * - Real-time two-way dialogue with clean interruption / barge-in
+ * - User and assistant live transcriptions
+ * - Camera and screen-share visual frames
+ * - Session resumption and automatic reconnection
+ */
 class NetoLiveSession(
     private val scope: CoroutineScope,
     private val onStateChanged: (State) -> Unit,
@@ -28,20 +39,18 @@ class NetoLiveSession(
 
     enum class State {
         IDLE,
+        CONNECTING,
         LISTENING,
         THINKING,
-        SPEAKING
+        SPEAKING,
+        ERROR
     }
 
     companion object {
-        // Current Gemini Live production model (2025)
         private const val MODEL = "models/gemini-3.8-live"
 
-        private const val INPUT_MIME =
-            "audio/pcm;rate=16000"
-
-        private const val OUTPUT_MIME_PREFIX =
-            "audio/pcm"
+        private const val INPUT_MIME = "audio/pcm;rate=16000"
+        private const val OUTPUT_MIME_PREFIX = "audio/pcm"
 
         private const val WS_ENDPOINT =
             "wss://generativelanguage.googleapis.com/" +
@@ -52,24 +61,30 @@ class NetoLiveSession(
         private const val RECONNECT_DELAY_MS = 1_000L
     }
 
-    private val tokenClient =
-        NetoLiveTokenClient()
+    private val tokenClient = NetoLiveTokenClient()
 
-    private val httpClient =
-        HttpClient(Android) {
-            install(WebSockets)
-        }
+    private val httpClient = HttpClient(Android) {
+        install(WebSockets)
+    }
 
-    private val socketMutex =
-        Mutex()
+    private val socketMutex = Mutex()
 
     private var session: WebSocketSession? = null
     private var receiveJob: Job? = null
     private var tokenJob: Job? = null
     private var recorder: NetoAudioRecorder? = null
 
-    private val player =
-        NetoAudioPlayer()
+    private val player = NetoAudioPlayer(
+        onPlaybackStateChanged = { isPlaying ->
+            if (!isPlaying && microphoneActive && !closing && currentState == State.SPEAKING) {
+                currentState = State.LISTENING
+                onStateChanged(State.LISTENING)
+            }
+        }
+    )
+
+    @Volatile
+    private var currentState: State = State.IDLE
 
     @Volatile
     private var connected = false
@@ -86,20 +101,17 @@ class NetoLiveSession(
     private var sessionResumptionHandle: String? = null
     private var reconnectAttempt = 0
 
-    private val outboundChannel =
-        kotlinx.coroutines.channels.Channel<String>(
-            capacity = 8,
-            onBufferOverflow =
-                kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
-        )
+    private val outboundChannel = kotlinx.coroutines.channels.Channel<String>(
+        capacity = 16,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
 
     private var outboundJob: Job? = null
 
+    fun currentState(): State = currentState
+
     fun start() {
-        if (
-            connected ||
-            tokenJob?.isActive == true
-        ) {
+        if (connected || tokenJob?.isActive == true) {
             return
         }
 
@@ -108,85 +120,76 @@ class NetoLiveSession(
         reconnectAttempt = 0
         sessionResumptionHandle = null
 
-        onStateChanged(State.THINKING)
+        currentState = State.CONNECTING
+        onStateChanged(State.CONNECTING)
 
-        tokenJob =
-            scope.launch(Dispatchers.IO) {
-                val tokenResponse: NetoLiveTokenResponse =
-                    tokenClient.requestToken()
+        tokenJob = scope.launch(Dispatchers.IO) {
+            val tokenResponse: NetoLiveTokenResponse = tokenClient.requestToken()
 
-                val token: String =
-                    tokenResponse.token
-                        ?.takeIf { it.isNotBlank() }
-                        ?: run {
-                            onError(
-                                tokenResponse.error
-                                    ?: "NETO Live could not start."
-                            )
-                            onStateChanged(State.IDLE)
-                            return@launch
-                        }
-
-                connect(token)
-            }
-    }
-
-    private suspend fun connect(
-        token: String
-    ) {
-        try {
-            val url =
-                buildString {
-                    append(WS_ENDPOINT)
-                    append("?access_token=")
-                    append(token)
+            val token: String = tokenResponse.token
+                ?.takeIf { it.isNotBlank() }
+                ?: run {
+                    currentState = State.ERROR
+                    onStateChanged(State.ERROR)
+                    onError(
+                        tokenResponse.error
+                            ?: "NETO couldn't connect to the voice service. Please try again."
+                    )
+                    kotlinx.coroutines.delay(2000L)
+                    currentState = State.IDLE
+                    onStateChanged(State.IDLE)
+                    return@launch
                 }
 
-            httpClient.webSocket(
-                urlString = url
-            ) {
+            connect(token)
+        }
+    }
+
+    private suspend fun connect(token: String) {
+        try {
+            val url = buildString {
+                append(WS_ENDPOINT)
+                append("?access_token=")
+                append(token)
+            }
+
+            httpClient.webSocket(urlString = url) {
                 session = this
                 connected = true
                 closing = false
 
-                outboundJob =
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            for (message in outboundChannel) {
-                                if (closing) break
+                outboundJob = scope.launch(Dispatchers.IO) {
+                    try {
+                        for (message in outboundChannel) {
+                            if (closing) break
 
-                                runCatching {
-                                    socketMutex.withLock {
-                                        session?.send(
-                                            Frame.Text(message)
-                                        )
-                                    }
-                                }.onFailure {
-                                    if (!closing) {
-                                        scheduleReconnect()
-                                    }
+                            runCatching {
+                                socketMutex.withLock {
+                                    session?.send(Frame.Text(message))
+                                }
+                            }.onFailure {
+                                if (!closing) {
+                                    scheduleReconnect()
                                 }
                             }
-                        } catch (_: Throwable) {
-                            // Socket shutdown/cancellation is expected.
                         }
+                    } catch (_: Throwable) {
+                        // Outbound channel shutdown is expected.
                     }
+                }
 
                 sendSetup()
-
                 player.start()
 
-                receiveJob =
-                    scope.launch(Dispatchers.IO) {
-                        receiveLoop(this@webSocket)
-                    }
+                receiveJob = scope.launch(Dispatchers.IO) {
+                    receiveLoop(this@webSocket)
+                }
 
                 startMicrophone()
 
                 if (microphoneActive) {
-                    onStateChanged(
-                        State.LISTENING
-                    )
+                    currentState = State.LISTENING
+                    onStateChanged(State.LISTENING)
                 }
 
                 receiveJob?.join()
@@ -210,374 +213,232 @@ class NetoLiveSession(
             outboundJob = null
 
             session = null
-
             onAudioLevel(0f)
 
-            if (!closing) {
+            if (!closing && !reconnecting) {
+                currentState = State.IDLE
                 onStateChanged(State.IDLE)
             }
         }
     }
 
     private suspend fun sendSetup() {
-        val setup =
+        val setup = JSONObject().put(
+            "setup",
             JSONObject()
+                .put("model", MODEL)
                 .put(
-                    "setup",
+                    "generationConfig",
                     JSONObject()
+                        .put("responseModalities", org.json.JSONArray().put("AUDIO"))
                         .put(
-                            "model",
-                            MODEL
-                        )
-                        .put(
-                            "responseModalities",
-                            org.json.JSONArray()
-                                .put("AUDIO")
-                        )
-                        .put(
-                            "sessionResumption",
-                            JSONObject().apply {
-                                sessionResumptionHandle
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?.let { put("handle", it) }
-                            }
-                        )
-                        .put(
-                            "inputAudioTranscription",
-                            JSONObject()
-                        )
-                        .put(
-                            "outputAudioTranscription",
-                            JSONObject()
-                        )
-                        .put(
-                            "systemInstruction",
-                            JSONObject()
-                                .put(
-                                    "parts",
-                                    org.json.JSONArray()
-                                        .put(
-                                            JSONObject()
-                                                .put(
-                                                    "text",
-                                                    """
-                                                    You are NETO, a warm, concise,
-                                                    voice-first personal AI assistant.
-
-                                                    Speak naturally and conversationally.
-                                                    Help the user ask, do, remember,
-                                                    find, and act.
-
-                                                    When speaking aloud, avoid unnecessary
-                                                    formatting and keep responses natural.
-
-                                                    The user may provide camera or screen
-                                                    images. Treat visual input as part of
-                                                    the current conversation and describe
-                                                    what is relevant when asked.
-                                                    """.trimIndent()
-                                                )
-                                        )
+                            "speechConfig",
+                            JSONObject().put(
+                                "voiceConfig",
+                                JSONObject().put(
+                                    "prebuiltVoiceConfig",
+                                    JSONObject().put("voiceName", "Aoede")
                                 )
+                            )
                         )
                 )
+                .put(
+                    "responseModalities",
+                    org.json.JSONArray().put("AUDIO")
+                )
+                .put(
+                    "sessionResumption",
+                    JSONObject().apply {
+                        sessionResumptionHandle
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { put("handle", it) }
+                    }
+                )
+                .put("inputAudioTranscription", JSONObject())
+                .put("outputAudioTranscription", JSONObject())
+                .put(
+                    "systemInstruction",
+                    JSONObject().put(
+                        "parts",
+                        org.json.JSONArray().put(
+                            JSONObject().put(
+                                "text",
+                                """
+                                You are NETO, a warm, concise, voice-first personal AI assistant.
+                                Speak naturally and conversationally like a helpful friend.
+                                Help the user ask questions, do tasks, remember notes, find information, and control their phone.
+                                Keep spoken responses brief and natural without markdown.
+                                Created by Macdonald Barasa.
+                                """.trimIndent()
+                            )
+                        )
+                    )
+                )
+        )
 
         socketMutex.withLock {
-            session?.send(
-                Frame.Text(
-                    setup.toString()
-                )
-            )
+            session?.send(Frame.Text(setup.toString()))
         }
     }
 
     private fun startMicrophone() {
-        if (microphoneActive) {
-            return
-        }
-
+        if (microphoneActive) return
         microphoneActive = true
 
-        recorder =
-            NetoAudioRecorder(
-                scope = scope,
-
-                onPcm = { pcm ->
-                    sendAudio(pcm)
-                },
-
-                onLevel = { level ->
-                    onAudioLevel(level)
-                },
-
-                onError = { message ->
-                    microphoneActive = false
-
-                    if (!closing) {
-                        onError(message)
-                    }
+        recorder = NetoAudioRecorder(
+            scope = scope,
+            onPcm = { pcm ->
+                sendAudio(pcm)
+            },
+            onLevel = { level ->
+                onAudioLevel(level)
+            },
+            onVoiceDetected = {
+                handleBargeIn()
+            },
+            onError = { message ->
+                microphoneActive = false
+                if (!closing) {
+                    onError(message)
                 }
-            )
+            }
+        )
 
         recorder?.start()
     }
 
-    private fun sendAudio(
-        pcm: ByteArray
-    ) {
-        if (
-            !connected ||
-            closing ||
-            pcm.isEmpty()
-        ) {
+    /**
+     * User started speaking while assistant is speaking -> instantly clear audio.
+     */
+    private fun handleBargeIn() {
+        if (currentState == State.SPEAKING) {
+            player.clear()
+            currentState = State.LISTENING
+            onStateChanged(State.LISTENING)
+        }
+    }
+
+    private fun sendAudio(pcm: ByteArray) {
+        if (!connected || closing || pcm.isEmpty()) {
             return
         }
 
-        val encoded =
-            Base64.encodeToString(
-                pcm,
-                Base64.NO_WRAP
-            )
+        val encoded = Base64.encodeToString(pcm, Base64.NO_WRAP)
 
-        val message =
-            JSONObject()
-                .put(
-                    "realtimeInput",
+        val message = JSONObject()
+            .put(
+                "realtimeInput",
+                JSONObject().put(
+                    "audio",
                     JSONObject()
-                        .put(
-                            "audio",
-                            JSONObject()
-                                .put(
-                                    "data",
-                                    encoded
-                                )
-                                .put(
-                                    "mimeType",
-                                    INPUT_MIME
-                                )
-                        )
+                        .put("data", encoded)
+                        .put("mimeType", INPUT_MIME)
                 )
-                .toString()
+            )
+            .toString()
 
         outboundChannel.trySend(message)
     }
 
-    private suspend fun receiveLoop(
-        socket: WebSocketSession
-    ) {
+    private suspend fun receiveLoop(socket: WebSocketSession) {
         try {
             for (frame in socket.incoming) {
-                if (!scope.isActive) {
-                    break
-                }
+                if (!scope.isActive) break
 
                 when (frame) {
                     is Frame.Text -> {
-                        handleServerMessage(
-                            frame.readText()
-                        )
+                        handleServerMessage(frame.readText())
                     }
-
                     is Frame.Close -> {
                         break
                     }
-
-                    else -> {
-                        Unit
-                    }
+                    else -> Unit
                 }
             }
-        } catch (t: Throwable) {
+        } catch (_: Throwable) {
             if (!closing) {
                 scheduleReconnect()
             }
         }
     }
 
-    private fun handleServerMessage(
-        raw: String
-    ) {
+    private fun handleServerMessage(raw: String) {
         runCatching {
-            val json =
-                JSONObject(raw)
+            val json = JSONObject(raw)
 
-            if (
-                json.has("setupComplete")
-            ) {
+            if (json.has("setupComplete")) {
                 return@runCatching
             }
 
-            val goAway =
-                json.optJSONObject("goAway")
-
+            val goAway = json.optJSONObject("goAway")
             if (goAway != null) {
-                // Google is warning that this WebSocket will terminate.
-                // Keep the current session handle and reconnect cleanly.
                 scheduleReconnect()
                 return@runCatching
             }
 
-            val resumptionUpdate =
-                json.optJSONObject("sessionResumptionUpdate")
-
+            val resumptionUpdate = json.optJSONObject("sessionResumptionUpdate")
             if (resumptionUpdate != null) {
-                val resumable =
-                    resumptionUpdate.optBoolean("resumable", false)
-
-                val newHandle =
-                    resumptionUpdate
-                        .optString("newHandle", "")
-                        .takeIf { it.isNotBlank() }
-
+                val resumable = resumptionUpdate.optBoolean("resumable", false)
+                val newHandle = resumptionUpdate.optString("newHandle", "").takeIf { it.isNotBlank() }
                 if (resumable && newHandle != null) {
                     sessionResumptionHandle = newHandle
                 }
-
                 return@runCatching
             }
 
-            val serverContent =
-                json.optJSONObject(
-                    "serverContent"
-                )
+            val serverContent = json.optJSONObject("serverContent") ?: return@runCatching
 
-            if (serverContent == null) {
-                return@runCatching
-            }
-
-            /*
-             * Gemini can interrupt the model while it
-             * is speaking when the user starts talking.
-             */
-            if (
-                serverContent.optBoolean(
-                    "interrupted",
-                    false
-                )
-            ) {
+            // Interruption detected by Gemini
+            if (serverContent.optBoolean("interrupted", false)) {
                 player.clear()
-
                 if (microphoneActive) {
-                    onStateChanged(
-                        State.LISTENING
-                    )
+                    currentState = State.LISTENING
+                    onStateChanged(State.LISTENING)
                 }
             }
 
-            /*
-             * User transcription.
-             */
-            val inputTranscript =
-                serverContent
-                    .optJSONObject(
-                        "inputTranscription"
-                    )
-                    ?.optString(
-                        "text",
-                        ""
-                    )
-                    .orEmpty()
+            // User transcription
+            val inputTranscript = serverContent
+                .optJSONObject("inputTranscription")
+                ?.optString("text", "")
+                .orEmpty()
 
             if (inputTranscript.isNotBlank()) {
-                onCaption(
-                    "You",
-                    inputTranscript
-                )
+                onCaption("You", inputTranscript)
             }
 
-            /*
-             * Model transcription.
-             */
-            val outputTranscript =
-                serverContent
-                    .optJSONObject(
-                        "outputTranscription"
-                    )
-                    ?.optString(
-                        "text",
-                        ""
-                    )
-                    .orEmpty()
+            // Assistant transcription
+            val outputTranscript = serverContent
+                .optJSONObject("outputTranscription")
+                ?.optString("text", "")
+                .orEmpty()
 
             if (outputTranscript.isNotBlank()) {
-                onCaption(
-                    "NETO",
-                    outputTranscript
-                )
+                onCaption("NETO", outputTranscript)
             }
 
-            /*
-             * Gemini's generated audio.
-             */
-            val modelTurn =
-                serverContent.optJSONObject(
-                    "modelTurn"
-                )
-
+            // Gemini generated audio chunks
+            val modelTurn = serverContent.optJSONObject("modelTurn")
             if (modelTurn != null) {
-                val parts =
-                    modelTurn.optJSONArray(
-                        "parts"
-                    )
-
+                val parts = modelTurn.optJSONArray("parts")
                 if (parts != null) {
-                    var playedAudio = false
+                    for (index in 0 until parts.length()) {
+                        val part = parts.optJSONObject(index) ?: continue
+                        val inlineData = part.optJSONObject("inlineData")
+                            ?: part.optJSONObject("inline_data")
+                            ?: continue
 
-                    for (
-                        index in
-                        0 until parts.length()
-                    ) {
-                        val part =
-                            parts.optJSONObject(
-                                index
-                            )
-                                ?: continue
+                        val data = inlineData.optString("data", "")
+                        if (data.isBlank()) continue
 
-                        val inlineData =
-                            part.optJSONObject(
-                                "inlineData"
-                            )
-                                ?: part.optJSONObject(
-                                    "inline_data"
-                                )
-                                ?: continue
-
-                        val data =
-                            inlineData.optString(
-                                "data",
-                                ""
-                            )
-
-                        if (data.isBlank()) {
-                            continue
-                        }
-
-                        val mime =
-                            inlineData.optString(
-                                "mimeType",
-                                ""
-                            )
-
-                        if (
-                            mime.startsWith(
-                                OUTPUT_MIME_PREFIX
-                            )
-                        ) {
-                            val pcm =
-                                Base64.decode(
-                                    data,
-                                    Base64.DEFAULT
-                                )
-
+                        val mime = inlineData.optString("mimeType", "")
+                        if (mime.startsWith(OUTPUT_MIME_PREFIX)) {
+                            val pcm = Base64.decode(data, Base64.DEFAULT)
                             if (pcm.isNotEmpty()) {
-                                if (!playedAudio) {
-                                    onStateChanged(
-                                        State.SPEAKING
-                                    )
-
-                                    playedAudio = true
+                                if (currentState != State.SPEAKING) {
+                                    currentState = State.SPEAKING
+                                    onStateChanged(State.SPEAKING)
                                 }
-
                                 player.play(pcm)
                             }
                         }
@@ -585,92 +446,74 @@ class NetoLiveSession(
                 }
             }
 
-            /*
-             * End of model turn.
-             */
-            if (
-                serverContent.optBoolean(
-                    "turnComplete",
-                    false
-                )
-            ) {
-                if (microphoneActive) {
-                    onStateChanged(
-                        State.LISTENING
-                    )
-                } else {
-                    onStateChanged(
-                        State.IDLE
-                    )
+            // Turn complete
+            if (serverContent.optBoolean("turnComplete", false)) {
+                if (!player.isPlaying()) {
+                    if (microphoneActive) {
+                        currentState = State.LISTENING
+                        onStateChanged(State.LISTENING)
+                    } else {
+                        currentState = State.IDLE
+                        onStateChanged(State.IDLE)
+                    }
                 }
             }
         }.onFailure {
             if (!closing) {
-                onError(
-                    "NETO received an invalid Live response."
-                )
+                onError("NETO received an invalid Live response.")
             }
         }
     }
 
     private fun scheduleReconnect() {
-        if (
-            closing ||
-            reconnecting ||
-            !scope.isActive
-        ) {
-            return
-        }
+        if (closing || reconnecting || !scope.isActive) return
 
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+            currentState = State.ERROR
+            onStateChanged(State.ERROR)
             onError("NETO Live connection ended. Please try again.")
-            onStateChanged(State.IDLE)
+            scope.launch {
+                kotlinx.coroutines.delay(2000L)
+                currentState = State.IDLE
+                onStateChanged(State.IDLE)
+            }
             return
         }
 
         reconnecting = true
         reconnectAttempt += 1
-
         val attempt = reconnectAttempt
+
+        currentState = State.CONNECTING
+        onStateChanged(State.CONNECTING)
 
         scope.launch(Dispatchers.IO) {
             try {
-                kotlinx.coroutines.delay(
-                    RECONNECT_DELAY_MS * attempt
-                )
+                kotlinx.coroutines.delay(RECONNECT_DELAY_MS * attempt)
+                if (closing || !scope.isActive) return@launch
 
-                if (closing || !scope.isActive) {
-                    return@launch
-                }
-
-                val tokenResponse =
-                    tokenClient.requestToken()
-
-                val token =
-                    tokenResponse.token
-                        ?.takeIf { it.isNotBlank() }
+                val tokenResponse = tokenClient.requestToken()
+                val token = tokenResponse.token?.takeIf { it.isNotBlank() }
 
                 if (token == null) {
                     reconnecting = false
-                    onError(
-                        tokenResponse.error
-                            ?: "NETO Live could not reconnect."
-                    )
-
                     if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+                        currentState = State.ERROR
+                        onStateChanged(State.ERROR)
+                        onError(tokenResponse.error ?: "NETO Live could not reconnect.")
+                        kotlinx.coroutines.delay(2000L)
+                        currentState = State.IDLE
                         onStateChanged(State.IDLE)
                     } else {
                         scheduleReconnect()
                     }
-
                     return@launch
                 }
 
                 reconnecting = false
                 connect(token)
-            } catch (t: Throwable) {
+            } catch (_: Throwable) {
                 reconnecting = false
-
                 if (!closing) {
                     scheduleReconnect()
                 }
@@ -679,12 +522,7 @@ class NetoLiveSession(
     }
 
     fun stop() {
-        if (
-            !connected &&
-            tokenJob?.isActive != true
-        ) {
-            return
-        }
+        if (!connected && tokenJob?.isActive != true) return
 
         closing = true
         reconnecting = false
@@ -694,30 +532,24 @@ class NetoLiveSession(
 
         recorder?.stop()
         recorder = null
+        player.clear()
+        player.stop()
 
         scope.launch(Dispatchers.IO) {
             runCatching {
                 socketMutex.withLock {
                     session?.send(
                         Frame.Text(
-                            JSONObject()
-                                .put(
-                                    "realtimeInput",
-                                    JSONObject()
-                                        .put(
-                                            "audioStreamEnd",
-                                            true
-                                        )
-                                )
-                                .toString()
+                            JSONObject().put(
+                                "realtimeInput",
+                                JSONObject().put("audioStreamEnd", true)
+                            ).toString()
                         )
                     )
                 }
             }
 
-            runCatching {
-                session?.close()
-            }
+            runCatching { session?.close() }
 
             session = null
             connected = false
@@ -725,74 +557,40 @@ class NetoLiveSession(
             outboundJob?.cancel()
             outboundJob = null
 
-            player.stop()
             onAudioLevel(0f)
+            currentState = State.IDLE
             onStateChanged(State.IDLE)
         }
     }
 
-    fun sendVideoFrame(
-        jpeg: ByteArray
-    ) {
-        if (
-            !connected ||
-            closing ||
-            jpeg.isEmpty()
-        ) {
-            return
-        }
+    fun sendVideoFrame(jpeg: ByteArray) {
+        if (!connected || closing || jpeg.isEmpty()) return
 
-        val encoded =
-            Base64.encodeToString(
-                jpeg,
-                Base64.NO_WRAP
-            )
-
-        val message =
-            JSONObject()
-                .put(
-                    "realtimeInput",
+        val encoded = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+        val message = JSONObject()
+            .put(
+                "realtimeInput",
+                JSONObject().put(
+                    "video",
                     JSONObject()
-                        .put(
-                            "video",
-                            JSONObject()
-                                .put(
-                                    "data",
-                                    encoded
-                                )
-                                .put(
-                                    "mimeType",
-                                    "image/jpeg"
-                                )
-                        )
+                        .put("data", encoded)
+                        .put("mimeType", "image/jpeg")
                 )
-                .toString()
+            )
+            .toString()
 
         outboundChannel.trySend(message)
     }
 
-    fun sendText(
-        text: String
-    ) {
-        if (
-            !connected ||
-            closing ||
-            text.isBlank()
-        ) {
-            return
-        }
+    fun sendText(text: String) {
+        if (!connected || closing || text.isBlank()) return
 
-        val message =
-            JSONObject()
-                .put(
-                    "realtimeInput",
-                    JSONObject()
-                        .put(
-                            "text",
-                            text.trim()
-                        )
-                )
-                .toString()
+        val message = JSONObject()
+            .put(
+                "realtimeInput",
+                JSONObject().put("text", text.trim())
+            )
+            .toString()
 
         outboundChannel.trySend(message)
     }
@@ -809,6 +607,7 @@ class NetoLiveSession(
         recorder?.stop()
         recorder = null
 
+        player.clear()
         player.stop()
 
         scope.launch(Dispatchers.IO) {
@@ -821,8 +620,8 @@ class NetoLiveSession(
 
         session = null
         connected = false
-
         onAudioLevel(0f)
+        currentState = State.IDLE
 
         httpClient.close()
     }

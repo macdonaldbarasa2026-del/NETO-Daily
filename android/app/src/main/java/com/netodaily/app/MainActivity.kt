@@ -95,6 +95,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var conversation = NetoConversation(id = UUID.randomUUID().toString())
     private var busy = false
 
+    private var currentUserCaption: String = ""
+    private var currentNetoCaption: String = ""
+    private var currentConfirmationDialog: AlertDialog? = null
+
     // Prevent repeated Gemini Live caption events from executing the same
     // phone action more than once.
     private var lastAgentCaption: String = ""
@@ -689,6 +693,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             micLabel.text = "Live Agent"
                             micIcon.setColorFilter(colorAccent)
                         }
+                        NetoLiveSession.State.CONNECTING -> {
+                            orb.setState(NetoOrbView.State.CONNECTING)
+                            statusPill.text = "Connecting to Gemini Live..."
+                            micLabel.text = "Connecting..."
+                            micIcon.setColorFilter(Color.rgb(251, 191, 36))
+                        }
                         NetoLiveSession.State.LISTENING -> {
                             orb.setState(NetoOrbView.State.LISTENING)
                             statusPill.text = "Listening... Speak naturally"
@@ -699,11 +709,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             orb.setState(NetoOrbView.State.THINKING)
                             statusPill.text = "NETO is thinking..."
                             micLabel.text = "Thinking..."
+                            micIcon.setColorFilter(Color.rgb(96, 165, 250))
                         }
                         NetoLiveSession.State.SPEAKING -> {
                             orb.setState(NetoOrbView.State.SPEAKING)
                             statusPill.text = "Speaking..."
                             micLabel.text = "Speaking..."
+                            micIcon.setColorFilter(Color.rgb(56, 189, 248))
+                        }
+                        NetoLiveSession.State.ERROR -> {
+                            orb.setState(NetoOrbView.State.ERROR)
+                            statusPill.text = "● Error"
+                            micLabel.text = "Try Again"
+                            micIcon.setColorFilter(Color.rgb(239, 68, 68))
                         }
                     }
                 }
@@ -711,17 +729,49 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             onCaption = { speaker, text ->
                 runOnUiThread {
                     if (text.isNotBlank()) {
-                        liveCaptionText.text = text
+                        val isUser = speaker.equals("You", ignoreCase = true) || speaker.isBlank()
+                        if (isUser) {
+                            currentUserCaption = text.trim()
+                        } else {
+                            currentNetoCaption = text.trim()
+                        }
 
-                        // Check if the caption triggers an agentic phone action!
-                        if (speaker.equals("You", ignoreCase = true) || speaker.isBlank()) {
+                        val dialogue = buildString {
+                            if (currentUserCaption.isNotBlank()) {
+                                append("You: ").append(currentUserCaption)
+                            }
+                            if (currentNetoCaption.isNotBlank()) {
+                                if (isNotEmpty()) append("\n")
+                                append("NETO: ").append(currentNetoCaption)
+                            }
+                        }
+
+                        if (dialogue.isNotBlank()) {
+                            liveCaptionText.text = dialogue
+                        }
+
+                        // Persist turn in conversation history
+                        val role = if (isUser) NetoMessage.Role.USER else NetoMessage.Role.NETO
+                        val msg = NetoMessage(
+                            id = UUID.randomUUID().toString(),
+                            role = role,
+                            text = text.trim()
+                        )
+                        conversation = conversation.copy(
+                            messages = conversation.messages + msg,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        store.saveCurrentConversation(conversation)
+
+                        // Check if user's caption triggers a phone agent action or voice confirmation
+                        if (isUser) {
                             val now = System.currentTimeMillis()
                             val normalized = text.trim()
 
                             if (
                                 normalized.isNotEmpty() &&
                                 (
-                                    normalized != lastAgentCaption ||
+                                    !normalized.equals(lastAgentCaption, ignoreCase = true) ||
                                     now - lastAgentCaptionAt > 5000L
                                 )
                             ) {
@@ -740,10 +790,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             },
             onError = { message ->
                 runOnUiThread {
-                    liveCaptionText.text = message.ifBlank { "Live voice session ended." }
-                    orb.setState(NetoOrbView.State.IDLE)
-                    statusPill.text = "● Ready"
+                    val msg = message.ifBlank { "Live voice session ended." }
+                    liveCaptionText.text = msg
+                    orb.setState(NetoOrbView.State.ERROR)
+                    statusPill.text = "● Error"
                     micLabel.text = "Live Agent"
+                    micIcon.setColorFilter(Color.rgb(239, 68, 68))
                 }
             }
         )
@@ -821,9 +873,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun toggleVoice() {
         when (orb.currentState()) {
-            NetoOrbView.State.IDLE -> {
-                orb.setState(NetoOrbView.State.THINKING)
+            NetoOrbView.State.IDLE, NetoOrbView.State.ERROR -> {
+                orb.setState(NetoOrbView.State.CONNECTING)
                 statusPill.text = "Connecting..."
+                micLabel.text = "Connecting..."
+                micIcon.setColorFilter(Color.rgb(251, 191, 36))
                 liveSession.start()
             }
             else -> {
@@ -831,6 +885,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 orb.setState(NetoOrbView.State.IDLE)
                 statusPill.text = "● Ready"
                 micLabel.text = "Live Agent"
+                micIcon.setColorFilter(colorAccent)
             }
         }
     }
@@ -842,6 +897,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         orb.setState(NetoOrbView.State.IDLE)
         statusPill.text = "● Ready"
         micLabel.text = "Live Agent"
+        micIcon.setColorFilter(colorAccent)
+        currentUserCaption = ""
+        currentNetoCaption = ""
         liveCaptionText.text = "Session ended. Tap mic to talk."
     }
 
@@ -880,6 +938,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun sendAgentPrompt(query: String) {
+        currentUserCaption = query
+        currentNetoCaption = ""
         liveCaptionText.text = "You: $query"
         orb.setState(NetoOrbView.State.THINKING)
         statusPill.text = "NETO is acting..."
@@ -895,13 +955,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         scope.launch {
             try {
                 val response = aiEngine.processUserMessage(query)
-                liveCaptionText.text = response
+                currentNetoCaption = response
+                val dialogue = "You: $query\nNETO: $response"
+                liveCaptionText.text = dialogue
                 speakOutLoud(response)
+
+                val msgUser = NetoMessage(id = UUID.randomUUID().toString(), role = NetoMessage.Role.USER, text = query)
+                val msgAi = NetoMessage(id = UUID.randomUUID().toString(), role = NetoMessage.Role.NETO, text = response)
+                conversation = conversation.copy(
+                    messages = conversation.messages + listOf(msgUser, msgAi),
+                    updatedAt = System.currentTimeMillis()
+                )
+                store.saveCurrentConversation(conversation)
+
                 orb.setState(NetoOrbView.State.IDLE)
                 statusPill.text = "● Ready"
             } catch (e: Exception) {
                 val err = e.message ?: "Something went wrong."
-                liveCaptionText.text = err
+                currentNetoCaption = err
+                liveCaptionText.text = "You: $query\nNETO: $err"
                 orb.setState(NetoOrbView.State.IDLE)
                 statusPill.text = "● Ready"
             }
@@ -923,7 +995,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         lastAgentCaption = normalizedCaption
         lastAgentCaptionAt = now
 
-
         val result = phoneAgent.handleAgenticAction(text)
         if (result.handled) {
             presentAgentResult(result)
@@ -933,9 +1004,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun presentAgentResult(result: NetoPhoneAgent.AgentResult) {
         if (!result.handled) return
 
+        currentConfirmationDialog?.dismiss()
+        currentConfirmationDialog = null
+
+        currentNetoCaption = result.feedback
+        val dialogue = buildString {
+            if (currentUserCaption.isNotBlank()) append("You: ").append(currentUserCaption).append("\n")
+            append("NETO: ").append(result.feedback)
+        }
+        liveCaptionText.text = dialogue
+
         if (!result.requiresConfirmation) {
             showActionToast(result.feedback)
-            liveCaptionText.text = result.feedback
             speakOutLoud(result.feedback)
 
             orb.setState(NetoOrbView.State.IDLE)
@@ -948,6 +1028,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+        speakOutLoud(result.feedback)
+
         val title =
             when (result.actionType) {
                 "CALL" -> "Confirm call"
@@ -955,21 +1037,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 else -> "Confirm action"
             }
 
-        AlertDialog.Builder(this)
+        currentConfirmationDialog = AlertDialog.Builder(this)
             .setTitle(title)
             .setMessage(result.feedback)
             .setNegativeButton("Cancel") { _, _ ->
+                currentConfirmationDialog = null
                 val cancelled = phoneAgent.cancelPendingAction()
                 showActionToast(cancelled.feedback)
-                liveCaptionText.text = cancelled.feedback
+                currentNetoCaption = cancelled.feedback
+                liveCaptionText.text = buildString {
+                    if (currentUserCaption.isNotBlank()) append("You: ").append(currentUserCaption).append("\n")
+                    append("NETO: ").append(cancelled.feedback)
+                }
                 speakOutLoud(cancelled.feedback)
                 orb.setState(NetoOrbView.State.IDLE)
                 statusPill.text = "● Cancelled"
             }
             .setPositiveButton("Confirm") { _, _ ->
+                currentConfirmationDialog = null
                 val confirmed = phoneAgent.confirmPendingAction()
                 showActionToast(confirmed.feedback)
-                liveCaptionText.text = confirmed.feedback
+                currentNetoCaption = confirmed.feedback
+                liveCaptionText.text = buildString {
+                    if (currentUserCaption.isNotBlank()) append("You: ").append(currentUserCaption).append("\n")
+                    append("NETO: ").append(confirmed.feedback)
+                }
                 speakOutLoud(confirmed.feedback)
                 orb.setState(NetoOrbView.State.IDLE)
                 statusPill.text =
@@ -980,6 +1072,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     }
             }
             .setOnCancelListener {
+                currentConfirmationDialog = null
                 phoneAgent.cancelPendingAction()
             }
             .show()
@@ -1077,9 +1170,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    override fun onPause() {
+        super.onPause()
+        if (visualState != NetoVisualState.None) {
+            stopVisualInput()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (visualState != NetoVisualState.None) {
+            stopVisualInput()
+        }
+    }
+
     override fun onDestroy() {
         scope.cancel()
-        liveSession.stop()
+        currentConfirmationDialog?.dismiss()
+        currentConfirmationDialog = null
+        liveSession.release()
         visionController.dispose()
         tts?.stop()
         tts?.shutdown()

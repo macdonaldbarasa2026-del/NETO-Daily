@@ -8,9 +8,7 @@ object Supabase {
 
     val client = createSupabaseClient(
         supabaseUrl = BuildConfig.SUPABASE_URL.ifBlank { "https://vjzelobnfjvfchoiqbqr.supabase.co" },
-        supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY.also {
-            require(it.isNotBlank()) { "SUPABASE_PUBLISHABLE_KEY is missing from the Android build." }
-        }
+        supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY.ifBlank { "anon" }
     ) {
         install(Auth)
         install(Functions)

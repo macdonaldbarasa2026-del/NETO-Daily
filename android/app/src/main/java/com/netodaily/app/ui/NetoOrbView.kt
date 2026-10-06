@@ -16,9 +16,11 @@ class NetoOrbView @JvmOverloads constructor(
 
     enum class State {
         IDLE,
+        CONNECTING,
         LISTENING,
         THINKING,
-        SPEAKING
+        SPEAKING,
+        ERROR
     }
 
     private val auraPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -50,7 +52,7 @@ class NetoOrbView @JvmOverloads constructor(
 
     fun setState(value: State) {
         state = value
-        if (value == State.IDLE) {
+        if (value == State.IDLE || value == State.ERROR) {
             audioLevel = 0f
         }
         invalidate()
@@ -78,9 +80,11 @@ class NetoOrbView @JvmOverloads constructor(
         // 1. Exterior Glowing Aura (Gemini Radial Gradient)
         val outerColors = when (state) {
             State.IDLE -> intArrayOf(0x55087F68, 0x22054D3F, 0x000A1210)
+            State.CONNECTING -> intArrayOf(0x77F59E0B.toInt(), 0x33B45309.toInt(), 0x000A1210)
             State.LISTENING -> intArrayOf(0x8800E5A3.toInt(), 0x33087F68, 0x000A1210)
             State.THINKING -> intArrayOf(0x773B82F6, 0x331E3A8A, 0x000A1210)
             State.SPEAKING -> intArrayOf(0x9900F2FE.toInt(), 0x444FACFE, 0x000A1210)
+            State.ERROR -> intArrayOf(0x88EF4444.toInt(), 0x33B91C1C.toInt(), 0x000A1210)
         }
         val auraRadius = baseRadius * 1.6f
         auraPaint.shader = RadialGradient(cx, cy, auraRadius, outerColors, floatArrayOf(0.1f, 0.65f, 1f), Shader.TileMode.CLAMP)
@@ -91,9 +95,11 @@ class NetoOrbView @JvmOverloads constructor(
         wavePaint.strokeWidth = size * (0.015f + level * 0.02f)
         val waveColor = when (state) {
             State.IDLE -> 0x6600E5A3.toInt()
+            State.CONNECTING -> 0xCCF59E0B.toInt()
             State.LISTENING -> 0xCC00E5A3.toInt()
             State.THINKING -> 0xAA60A5FA.toInt()
             State.SPEAKING -> 0xEE38BDF8.toInt()
+            State.ERROR -> 0xCCEF4444.toInt()
         }
         wavePaint.color = waveColor
         canvas.drawCircle(cx, cy, baseRadius * 1.15f, wavePaint)
@@ -101,9 +107,11 @@ class NetoOrbView @JvmOverloads constructor(
         // 3. Inner Luminous Core
         val coreColors = when (state) {
             State.IDLE -> intArrayOf(0xFF1B6B58.toInt(), 0xFF0B332A.toInt())
+            State.CONNECTING -> intArrayOf(0xFFFBBF24.toInt(), 0xFFD97706.toInt())
             State.LISTENING -> intArrayOf(0xFF00E5A3.toInt(), 0xFF087F68.toInt())
             State.THINKING -> intArrayOf(0xFF93C5FD.toInt(), 0xFF2563EB.toInt())
             State.SPEAKING -> intArrayOf(0xFF67E8F9.toInt(), 0xFF0284C7.toInt())
+            State.ERROR -> intArrayOf(0xFFF87171.toInt(), 0xFF991B1B.toInt())
         }
         corePaint.shader = RadialGradient(cx, cy, baseRadius, coreColors, null, Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, baseRadius, corePaint)

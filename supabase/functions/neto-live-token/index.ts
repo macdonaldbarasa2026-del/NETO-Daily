@@ -95,11 +95,13 @@ Created by Macdonald Barasa.`,
 
     const data = await response.json().catch(() => ({}));
 
-  if (response.ok && data.name) {
+  const token = data.name || data.token;
+
+  if (response.ok && token) {
     return Response.json(
       {
         ok: true,
-        token: data.name,
+        token,
         model,
         expiresAt: expireTime,
       },

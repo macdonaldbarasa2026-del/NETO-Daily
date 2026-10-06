@@ -35,16 +35,18 @@ class NetoPhoneAgent(
             System.currentTimeMillis() - pendingActionCreatedAt > 60_000L
     }
 
+    fun hasPendingAction(): Boolean = pendingAction != null && !pendingActionExpired()
+
     fun handleAgenticAction(query: String): AgentResult {
         val text = query.trim()
         val lower = text.lowercase(Locale.ROOT)
 
         // Voice confirmation / cancellation.
-        if (lower in setOf("yes", "yes please", "confirm", "confirmed", "do it", "send it", "go ahead")) {
+        if (lower in setOf("yes", "yes please", "confirm", "confirmed", "do it", "go ahead", "send it", "continue")) {
             return confirmPendingAction()
         }
 
-        if (lower in setOf("no", "cancel", "cancel it", "never mind", "never mind cancel", "stop")) {
+        if (lower in setOf("no", "cancel", "cancel it", "never mind", "never mind cancel", "stop", "don't")) {
             return cancelPendingAction()
         }
 
@@ -97,10 +99,13 @@ class NetoPhoneAgent(
         // 8. Daily Notes
         if (
             lower.startsWith("add note ") ||
+            lower.startsWith("take a note ") ||
+            lower.startsWith("create note ") ||
+            lower.startsWith("new note ") ||
             lower.startsWith("note ")
         ) {
             val noteText = text.replaceFirst(
-                Regex("^(add note|note)\\s*", RegexOption.IGNORE_CASE),
+                Regex("^(add note|take a note|create note|new note|note)\\s*", RegexOption.IGNORE_CASE),
                 ""
             ).trim()
 
@@ -110,7 +115,11 @@ class NetoPhoneAgent(
         if (
             lower.contains("show my notes") ||
             lower.contains("read my notes") ||
-            lower.contains("what are my notes")
+            lower.contains("what are my notes") ||
+            lower.contains("show notes") ||
+            lower.contains("read notes") ||
+            lower.contains("my notes") ||
+            lower.contains("view my notes")
         ) {
             return executeReadNotes()
         }
@@ -153,7 +162,7 @@ class NetoPhoneAgent(
 
         return AgentResult(
             handled = true,
-            feedback = "Note saved: ${note.title}",
+            feedback = "I've saved your note: $cleanContent",
             actionType = "add_note"
         )
     }
@@ -171,7 +180,7 @@ class NetoPhoneAgent(
         val preview = notes
             .take(5)
             .joinToString("\n") { note ->
-                "• ${note.title}: ${note.content}"
+                "• ${note.content}"
             }
 
         val extra = if (notes.size > 5) {
@@ -182,7 +191,7 @@ class NetoPhoneAgent(
 
         return AgentResult(
             handled = true,
-            feedback = "Your latest notes:\n$preview$extra",
+            feedback = "Here are your saved notes:\n$preview$extra",
             actionType = "read_notes"
         )
     }
@@ -225,7 +234,7 @@ class NetoPhoneAgent(
 
             AgentResult(
                 handled = true,
-                feedback = "Call $target at $number?",
+                feedback = "I can call $target. Do you want me to continue?",
                 actionType = "CALL",
                 requiresConfirmation = true
             )
@@ -325,7 +334,7 @@ class NetoPhoneAgent(
 
             AgentResult(
                 handled = true,
-                feedback = "Send this message to $recipient?\n\n$messageBody",
+                feedback = "I can send this message to $recipient: \"$messageBody\". Do you want me to continue?",
                 actionType = "SMS",
                 requiresConfirmation = true
             )
